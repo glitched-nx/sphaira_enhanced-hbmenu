@@ -1,4 +1,10 @@
-# sphaira
+<div align="center">
+
+![Icon](assets/icon.jpg)
+
+# sphaira - enhanced hbmenu
+
+</div>
 
 A homebrew menu for the switch.
 
