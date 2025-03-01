@@ -647,9 +647,9 @@ void App::SetReplaceHbmenuEnable(bool enable) {
                     }
 
                     NacpStruct actual_hbmenu_nacp;
-                    if (R_FAILED(nro_get_nacp("/switch/hbmenu.nro", actual_hbmenu_nacp))) {
+                    if (R_FAILED(nro_get_nacp("/config/sphaira/hbmenu.nro", actual_hbmenu_nacp))) {
                         App::Push(std::make_shared<ui::OptionBox>(
-                            "Failed to find /switch/hbmenu.nro\n"
+                            "Failed to find /config/sphaira/hbmenu.nro\n"
                             "Use the Appstore to re-install hbmenu"_i18n,
                             "OK"_i18n
                         ));
@@ -690,7 +690,7 @@ void App::SetReplaceHbmenuEnable(bool enable) {
                     }
 
                     // this should never fail, if it does, well then the sd card is fucked.
-                    if (R_FAILED(rc = fs.copy_entire_file("/hbmenu.nro", "/switch/hbmenu.nro")))  {
+                    if (R_FAILED(rc = fs.copy_entire_file("/hbmenu.nro", "/config/sphaira/hbmenu.nro")))  {
                         // try and restore sphaira in a last ditch effort.
                         if (R_FAILED(rc = fs.copy_entire_file("/hbmenu.nro", sphaira_path))) {
                             App::Push(std::make_shared<ui::ErrorBox>(rc,
@@ -706,7 +706,7 @@ void App::SetReplaceHbmenuEnable(bool enable) {
                     }
 
                     // don't need this any more.
-                    fs.DeleteFile("/switch/hbmenu.nro");
+                    fs.DeleteFile("/config/sphaira/hbmenu.nro");
 
                     // if we were hbmenu, exit now (as romfs is gone).
                     if (IsHbmenu()) {
@@ -1453,7 +1453,7 @@ App::~App() {
 
         if (R_SUCCEEDED(rc = nro_get_nacp("/hbmenu.nro", hbmenu_nacp)) && std::strcmp(hbmenu_nacp.lang[0].name, "sphaira")) {
             log_write("backing up hbmenu.nro\n");
-            if (R_FAILED(rc = fs.copy_entire_file("/switch/hbmenu.nro", "/hbmenu.nro"))) {
+            if (R_FAILED(rc = fs.copy_entire_file("/config/sphaira/hbmenu.nro", "/hbmenu.nro"))) {
                 log_write("failed to backup  hbmenu.nro\n");
             }
         } else {

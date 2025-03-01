@@ -24,7 +24,7 @@ namespace {
 
 // format is /themes/sphaira/Theme Name by Author/theme_name-type.nxtheme
 constexpr fs::FsPath THEME_FOLDER{"/themes/sphaira/"};
-constexpr auto CACHE_PATH = "/switch/sphaira/cache/themezer";
+constexpr auto CACHE_PATH = "/config/sphaira/cache/themezer";
 constexpr auto URL_BASE = "https://switch.cdn.fortheusers.org";
 
 constexpr const char* REQUEST_TARGET[]{
@@ -219,7 +219,7 @@ void from_json(const fs::FsPath& path, PackList& e) {
 }
 
 auto InstallTheme(ProgressBox* pbox, const PackListEntry& entry) -> bool {
-    static const fs::FsPath zip_out{"/switch/sphaira/cache/themezer/temp.zip"};
+    static const fs::FsPath zip_out{"/config/sphaira/cache/themezer/temp.zip"};
     constexpr auto chunk_size = 1024 * 512; // 512KiB
 
     fs::FsNativeSd fs;

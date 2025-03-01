@@ -53,7 +53,8 @@ constexpr std::string_view READONLY_FILES[]{
     "/hbmenu.nro", // breaks hbl
     "/payload.bin", // some modchips need this
 
-    "/boot.dat", // sxos
+    "/boot.dat", // sxos gear
+    "/boot.ini", // sxos gear
     "/license.dat", // sxos
 
     "/switch/prod.keys",

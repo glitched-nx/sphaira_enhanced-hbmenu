@@ -24,7 +24,7 @@
 namespace sphaira::ui::menu::gh {
 namespace {
 
-constexpr auto CACHE_PATH = "/switch/sphaira/cache/github";
+constexpr auto CACHE_PATH = "/config/sphaira/cache/github";
 
 auto GenerateApiUrl(const Entry& e) {
     if (e.tag == "latest") {
@@ -82,7 +82,7 @@ void from_json(const fs::FsPath& path, GhApiEntry& e) {
 }
 
 auto DownloadApp(ProgressBox* pbox, const GhApiAsset& gh_asset, const AssetEntry* entry) -> bool {
-    static const fs::FsPath temp_file{"/switch/sphaira/cache/github/ghdl.temp"};
+    static const fs::FsPath temp_file{"/config/sphaira/cache/github/ghdl.temp"};
     constexpr auto chunk_size = 1024 * 512; // 512KiB
 
     fs::FsNativeSd fs;

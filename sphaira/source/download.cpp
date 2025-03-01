@@ -216,7 +216,7 @@ private:
         }
     }
 
-    static constexpr inline fs::FsPath JSON_PATH{"/switch/sphaira/cache/cache.json"};
+    static constexpr inline fs::FsPath JSON_PATH{"/config/sphaira/cache/cache.json"};
     static constexpr inline const char* ETAG_STR{"etag"};
     static constexpr inline const char* LAST_MODIFIED_STR{"last-modified"};
 
@@ -337,7 +337,7 @@ void GetDownloadTempPath(fs::FsPath& buf) {
     count++;
     mutexUnlock(&mutex);
 
-    std::snprintf(buf, sizeof(buf), "/switch/sphaira/cache/download_temp%lu", count_copy);
+    std::snprintf(buf, sizeof(buf), "/config/sphaira/cache/download_temp%lu", count_copy);
 }
 
 auto ProgressCallbackFunc1(void *clientp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow) -> size_t {

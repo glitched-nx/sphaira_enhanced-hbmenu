@@ -27,8 +27,8 @@
 namespace sphaira::ui::menu::appstore {
 namespace {
 
-constexpr fs::FsPath REPO_PATH{"/switch/sphaira/cache/appstore/repo.json"};
-constexpr fs::FsPath CACHE_PATH{"/switch/sphaira/cache/appstore"};
+constexpr fs::FsPath REPO_PATH{"/config/sphaira/cache/appstore/repo.json"};
+constexpr fs::FsPath CACHE_PATH{"/config/sphaira/cache/appstore"};
 constexpr auto URL_BASE = "https://switch.cdn.fortheusers.org";
 constexpr auto URL_JSON = "https://switch.cdn.fortheusers.org/repo.json";
 constexpr auto URL_POST_FEEDBACK = "http://switchbru.com/appstore/feedback";
@@ -333,7 +333,7 @@ auto UninstallApp(ProgressBox* pbox, const Entry& entry) -> bool {
 // 3. parse manifest and unzip everything to placeholder
 // 4. move everything from placeholder to normal location
 auto InstallApp(ProgressBox* pbox, const Entry& entry) -> bool {
-    static const fs::FsPath zip_out{"/switch/sphaira/cache/appstore/temp.zip"};
+    static const fs::FsPath zip_out{"/config/sphaira/cache/appstore/temp.zip"};
     constexpr auto chunk_size = 1024 * 512; // 512KiB
 
     fs::FsNativeSd fs;
@@ -849,9 +849,9 @@ auto toLower(const std::string& str) -> std::string {
 
 Menu::Menu(const std::vector<NroEntry>& nro_entries) : MenuBase{"AppStore"_i18n}, m_nro_entries{nro_entries} {
     fs::FsNativeSd fs;
-    fs.CreateDirectoryRecursively("/switch/sphaira/cache/appstore/icons");
-    fs.CreateDirectoryRecursively("/switch/sphaira/cache/appstore/banners");
-    fs.CreateDirectoryRecursively("/switch/sphaira/cache/appstore/screens");
+    fs.CreateDirectoryRecursively("/config/sphaira/cache/appstore/icons");
+    fs.CreateDirectoryRecursively("/config/sphaira/cache/appstore/banners");
+    fs.CreateDirectoryRecursively("/config/sphaira/cache/appstore/screens");
 
     this->SetActions(
         std::make_pair(Button::RIGHT, Action{[this](){

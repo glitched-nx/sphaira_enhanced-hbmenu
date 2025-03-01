@@ -23,11 +23,11 @@
 namespace sphaira::ui::menu::main {
 namespace {
 
-constexpr const char* GITHUB_URL{"https://api.github.com/repos/ITotalJustice/sphaira/releases/latest"};
-constexpr fs::FsPath CACHE_PATH{"/switch/sphaira/cache/sphaira_latest.json"};
+constexpr const char* GITHUB_URL{"https://api.github.com/repos/glitched-nx/sphaira/releases/latest"};
+constexpr fs::FsPath CACHE_PATH{"/config/sphaira/cache/sphaira_latest.json"};
 
 auto InstallUpdate(ProgressBox* pbox, const std::string url, const std::string version) -> bool {
-    static fs::FsPath zip_out{"/switch/sphaira/cache/update.zip"};
+    static fs::FsPath zip_out{"/config/sphaira/cache/update.zip"};
     constexpr auto chunk_size = 1024 * 512; // 512KiB
 
     fs::FsNativeSd fs;

@@ -96,7 +96,7 @@ constexpr RomDatabaseEntry PATHS[]{
     { "wonderswancolor", "Bandai - WonderSwan Color"},
 };
 
-constexpr fs::FsPath DAYBREAK_PATH{"/switch/daybreak.nro"};
+constexpr fs::FsPath DAYBREAK_PATH{"/switch/daybreak/daybreak.nro"};
 
 auto IsExtension(std::string_view ext, std::span<const std::string_view> list) -> bool {
     for (auto e : list) {
