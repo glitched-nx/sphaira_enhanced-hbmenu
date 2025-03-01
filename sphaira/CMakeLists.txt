@@ -1,10 +1,11 @@
 cmake_minimum_required(VERSION 3.13)
 
-set(sphaira_VERSION 0.6.2)
+set(sphaira_VERSION 0.6.3.mod)
 
 project(sphaira
     VERSION ${sphaira_VERSION}
     LANGUAGES C CXX
+    DESCRIPTION "enhanced hbmenu"
 )
 
 find_package(Git REQUIRED)
@@ -329,7 +330,7 @@ dkp_install_assets(sphaira_romfs
 nx_generate_nacp(
     OUTPUT sphaira.nacp
     NAME ${CMAKE_PROJECT_NAME}
-    AUTHOR TotalJustice
+    AUTHOR "TotalJustice, mod by glitched-nx"
     VERSION ${sphaira_VERSION}
 )
 
