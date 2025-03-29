@@ -6,33 +6,32 @@
 
 </div>
 
-**sphaira** is hbmenu alternative. It currently has feature parity with hbmenu `that is, launches homebrew + nxlink` whilst adding quite a few features.
+**sphaira** ist eine Alternative zu hbmenu. Es bietet aktuell die gleichen Funktionen wie hbmenu `das heißt, es startet Homebrew + nxlink` und fügt einige weitere Funktionen hinzu.
 
 
 ### HomeBrew​
-The main menu tab, it lists all the.nro found in `/switch/`. From there, you can `launch, sort, delete, create` a forwarder etc.
-You can navigate to the other menu tabs using **`L`** and **`R`**, explained below.
+Der Hauptmenü-Tab listet alle .nro-Dateien auf, die in `/switch/` gefunden wurden. Von dort aus kannst du sie `starten, sortieren, löschen, einen Forwarder erstellen` usw.
+Du kannst mit den Tasten **`L`** und **`R`** zu den anderen Menü-Tabs navigieren, die unten erklärt werden.
 
-### FileBrowser​
-By pressing **`L`** from the main menu, you can access the file browser. You can `Cut, Copy, Delete, Rename` etc.
-You can select multiple files / folders by using the **`ZR`** button and then se the above functions of that group of files.
+### DateiBrowser​
+Durch Drücken von **`L`** im Hauptmenü kannst du auf den Dateibrowser zugreifen. Du kannst Dateien `Ausschneiden, Kopieren, Löschen, Umbenennen` usw.
+Du kannst mehrere Dateien/Ordner auswählen, indem du die **`ZR`**-Taste verwendest und dann die oben genannten Funktionen auf diese Gruppe von Dateien anwendest.
 
-Forwaders can be created if the selected file has a file assoc, see below for more details.
+Forwarder können erstellt werden, wenn die ausgewählte Datei eine Dateizuordnung hat, siehe unten für weitere Details.
 
-### hbstore​
-sphaira features an appstore, using the api from [hb-app.store/switch](https://hb-app.store/switch). It can be navigated to by pressing **`R`** from the main menu.
-The appstore is feature parity with hb-appstore app, as well as installing the manifests in the same folder as hb-appstore, in order to not break compatibility between the two.
+### hb-appstore​
+sphaira enthält einen App-Store, der die API von [hb-appstore​](https://hb-app.store/switch) verwendet. Du kannst durch Drücken von **`R`** im Hauptmenü darauf zugreifen.
+Der App-Store bietet die gleichen Funktionen wie die hb-appstore-App und installiert die Manifeste im selben Ordner wie hb-appstore​, um die Kompatibilität zwischen beiden nicht zu beeinträchtigen.
 
 ### Themes​
-sphaira comes with 3 themes, abyss (default), black and white (unfinished).
-custom themes can be added to `/config/sphaira/themes/`, here is the `Abyss_theme` for example:
+sphaira kommt mit 3 Themes: Abyss (Standard), Black und White (unvollendet).
+Benutzerdefinierte Themes können zu `/config/sphaira/themes/` hinzugefügt werden. Hier ist zum Beispiel das `Abyss_theme`:
 
 ```ini
 [meta]
 name=Abyss
 author=TotalJustice
 version=1.0.0
-; unused currently
 preview=romfs:/theme/preview.jpg
 
 [theme]
@@ -52,27 +51,27 @@ icon_zip=romfs:/theme/icon_zip.png
 icon_nro=romfs:/theme/icon_nro.png
 ```
 
-Music can be added to a theme, as long as the music is converted to bfstm format. simply add an entry like so: `music=/config/sphaira/themes/music/bgmusic_pcm.bfstm`
+Musik kann zu einem Theme hinzugefügt werden, solange die Musik in das bfstm-Format konvertiert wurde. Füge einfach einen Eintrag wie folgt hinzu: `music=/config/sphaira/themes/music/bgmusic_pcm.bfstm`
 
-### Forwaders​
-sphaira can create and install forwarders for any.nro. It will use the icon of the .nro and the name + author.
+### Forwarder​
+sphaira kann Forwarder für jede .nro-Datei erstellen und installieren. Es verwendet das Symbol der .nro-Datei sowie den Namen + Autor.
 
-It can also install forwarders for files that have a file assoc. For example, if mgba is installed and a game is located in `/roms/gba/game.gba`, then the ***Install Forwarder*** option will appear. In this case, it will try to scrape the icon of the game, otherwise it will use the icon of the .nro and the name will be a combination of the.nro name and game name.
+Es kann auch Forwarder für Dateien installieren, die eine Dateizuordnung haben. Wenn zum Beispiel mgba installiert ist und sich ein Spiel in `/roms/gba/game.gba` befindet, dann erscheint die Option ***Forwarder installieren***. In diesem Fall wird versucht, das Symbol des Spiels zu extrahieren, andernfalls wird das Symbol der .nro-Datei verwendet und der Name wird eine Kombination aus dem .nro-Namen und dem Spielnamen sein.
 
-### File Assoc​
-file assoc is a way to associate file extensions (.gba,.nro etc) with a homebrew app. For example, clicking on rom.gbc that has an file assoc will bring up a list of all the applications that can handle it.
-This can be used for emulators, media players, text editors etc...
+### Dateizuordnung​
+Die Dateizuordnung ist eine Möglichkeit, Dateierweiterungen `.gba, .nro usw.` mit einer Homebrew-App zu verknüpfen. Wenn du zum Beispiel auf eine `rom.gbc` klickst, die eine Dateizuordnung hat, wird eine Liste aller Anwendungen angezeigt, die diese Datei verarbeiten können.
+Dies kann für Emulatoren, Mediaplayer, Texteditoren usw. verwendet werden...
 
-Custom file assoc should go in the folder `/config/sphaira/assoc/`.
+Benutzerdefinierte Dateizuordnungen sollten im Ordner `/config/sphaira/assoc/` abgelegt werden.
 
-The format is very simple, here is an example of `vgedit.ini`
+Das Format ist sehr einfach, hier ist ein Beispiel für `vgedit.ini`
 
 ```ini
 [config]
 supported_extensions=txt|json|cfg|ini|md|log
 ```
 
-And again for `mgba.ini`
+Und noch einmal für `mgba.ini`
 
 ```ini
 [config]
@@ -80,11 +79,12 @@ supported_extensions=gba|gbc|sgb|gb
 database=Nintendo - Game Boy|Nintendo - Game Boy Color|Nintendo - Game Boy Advance
 ```
 
-`path`: (optional) fullpath to the.nro. if not specified, it uses the name of the ini, ie, mgba.ini will use mgb.nro.
+`path`: (optional) vollständiger Pfad zur .nro-Datei. Wenn nicht angegeben, wird der Name der ini-Datei verwendet, d.h. mgba.ini verwendet mgba.nro.
 
-`supported_extensions`: list of extensions the application supports, separated by |. plea
+`supported_extensions`: Liste der Erweiterungen, die die Anwendung unterstützt, getrennt durch |.
 
-`database`: (optional) name of the rom database to use defined by the left-side of this table:
+`database`: (optional) Name der ROM-Datenbank, die verwendet werden soll, definiert durch die linke Seite dieser Tabelle:
+
 
 <https://gist.github.com/ITotalJustice/d5e82ba601ca13b638af9b00e33a4a86>
 
@@ -128,34 +128,34 @@ constexpr PathPair PATHS[]{
 };
 ```
 
-All of the retroarch cores has file assoc built into sphaira, so if you download retroarch using the appstore, and then navigate to `/roms/gbc/game.gbc`, gambatte and mgba will be available to be selected.
+Alle RetroArch-Cores haben in sphaira integrierte Dateizuordnungen, sodass du, wenn du RetroArch über den App-Store herunterlädst und dann zu `/roms/gbc/game.gbc` navigierst, Gambatte und mgba zur Auswahl stehen werden.
 
-Games can be kept in .zip format, sphaira will peek into the .zip and find the real extension and use that for displaying icons / file assoc.
+Spiele können im .zip-Format aufbewahrt werden, sphaira wird in die .zip-Datei schauen und die tatsächliche Erweiterung finden und diese für die Anzeige von Symbolen/Dateizuordnungen verwenden.
 
-### Roms​
-Roms should be placed in `/roms/system_name/` where system name is defined by this table right-side entries <https://gist.github.com/ITotalJustice/d5e82ba601ca13b638af9b00e33a4a86>.
+### ROMs​
+ROMs sollten in `/roms/system_name/` abgelegt werden, wobei der Systemname durch die Einträge auf der rechten Seite dieser Tabelle definiert wird <https://gist.github.com/ITotalJustice/d5e82ba601ca13b638af9b00e33a4a86>.
 
-this is the same layout emulation station uses. the reason for forcing roms to be in specific folders is due to many roms for different systems using the same file extension, ie, .bin / .cue or .chd.
+Dies ist das gleiche Layout, das Emulation Station verwendet. Der Grund, warum ROMs in bestimmten Ordnern abgelegt werden müssen, liegt darin, dass viele ROMs für verschiedene Systeme die gleiche Dateierweiterung verwenden, z.B. .bin / .cue oder .chd.
 
-roms placed in subfolders are allowed, for example "/roms/psx/scooby-doo/scooby-doo.bin" is valid.
+ROMs in Unterordnern sind erlaubt, zum Beispiel ist `/roms/psx/scooby-doo/scooby-doo.bin` gültig.
 
 ### Themezer​
-Themes can be browsed and download by going **`Menu Options -> Misc -> Themezer`**. 
-Themes will be downloaded to **`/themes/sphaira/Theme Name - By Author/`**
+Themes können durchsucht und heruntergeladen werden, indem du zu **`Menüoptionen -> Verschiedenes -> Themezer`** gehst. 
+Themes werden nach **`/themes/sphaira/Theme Name - By Author/`** heruntergeladen.
 
-To install themes, launch **NXThemes Installer** and browse to the selected folder listed above.
+Um Themes zu installieren, starte **NXThemes Installer** und navigiere zum oben angegebenen Ordner.
 
 ### Irs​
-InfaRed Sensor. its a toy app i made 4(?) years ago where it shows the output of the joycon irs, use it to take a selfie :)
+InfraRot-Sensor. Das ist eine Spielerei-App, die ich vor 4(?) Jahren gemacht habe, die die Ausgabe des Joycon-IRS anzeigt. Nutze sie, um ein Selfie zu machen :)
 
 ### Web​
-Launches the builtin web browser, it's not very good.
+Startet den eingebauten Webbrowser, der nicht besonders gut ist.
 
 ### Nxlink​
-For homebrew developers, nxlink is built into sphaira. You do not have to press any special buttons, just do `nxlink .nro` and send your nro like normal, console logging works to be using `nxlink -s .nro`
-By default, this is enabled in the background, to disable it: `Menu Options -> Network -> Nxlink`.
+Für Homebrew-Entwickler ist nxlink in sphaira eingebaut. Du musst keine speziellen Tasten drücken, führe einfach `nxlink .nro` aus und sende deine nro wie gewohnt. Konsolenprotokollierung funktioniert mit `nxlink -s .nro`.
+Standardmäßig ist dies im Hintergrund aktiviert. Um es zu deaktivieren: `Menüoptionen -> Netzwerk -> Nxlink`.
 
-That's most of the features spahira has. If you enjoy it so much that you'd rather it be launched over regular hbmenu, you can enable the option in `Menu Options -> Replace hbmenu on exit` where it will do just that. It will create a backup of hbmenu in `/switch/hbmen.nro` should you wish to swap back.
+Das sind die meisten Funktionen, die sphaira bietet. Wenn es dir so gut gefällt, dass du es lieber anstelle des regulären hbmenu starten möchtest, kannst du die Option in `Menüoptionen -> hbmenu beim Beenden ersetzen` aktivieren, wodurch genau das geschieht. Es wird eine Sicherungskopie von hbmenu in `/switch/hbmen.nro` erstellt, falls du zurückwechseln möchtest.
 
 ### **[sphaira Releases](https://github.com/ITotalJustice/sphaira/releases)**
 
@@ -172,20 +172,22 @@ That's most of the features spahira has. If you enjoy it so much that you'd rath
 ![Img](assets/screenshots/2024121522505300-879193CD6A8B96CD00931A628B1187CB.jpg) | ![Img](assets/screenshots/2024121522502300-879193CD6A8B96CD00931A628B1187CB.jpg)
 ![Img](assets/screenshots/2024121523033200-879193CD6A8B96CD00931A628B1187CB.jpg) | ![Img](assets/screenshots/2024121523070300-879193CD6A8B96CD00931A628B1187CB.jpg)
 
-## bug reports
+## Fehlermeldungen
 
-for any bug reports, please use the issues tab and explain in as much detail as possible!
+Für Fehlermeldungen nutze bitte den Issues-Tab und erkläre so detailliert wie möglich!
 
-**Please include:**
+**Bitte gib an:**
 
-- CFW type (i assume Atmosphere, but someone out there is still using Rajnx)
-- CFW version
-- FW version
-- The bug itself and how to reproduce it
+- CFW-Typ (ich nehme an Atmosphere, aber jemand da draußen benutzt immer noch Rajnx)
+- CFW-Version
+- FW-Version
+- Den Fehler selbst und wie man ihn reproduzieren kann
 
-### FTP server
 
-FTP Server can be enabled via the network menu. It uses the same config as ftpsrv `/config/ftpsrv/config.ini`. 
+
+### FTP-Server
+
+Der FTP-Server kann über das Netzwerkmenü aktiviert werden. Er verwendet die gleiche Konfiguration wie ftpsrv `/config/ftpsrv/config.ini`.
 
 `config.ini.template`
 
@@ -195,53 +197,53 @@ FTP Server can be enabled via the network menu. It uses the same config as ftpsr
 ##########
 
 #######################################################################
-# Rename config.ini.template to config.ini for changes to take effect.#
+# Benenne config.ini.template in config.ini um, damit Änderungen wirksam werden.#
 #######################################################################
 
 [Login]
-# disabled by default, do not enable if using ldn_mitm as
-# it's a security risk - you have been warned!
+# standardmäßig deaktiviert, aktiviere dies nicht, wenn du ldn_mitm verwendest,
+# da es ein Sicherheitsrisiko darstellt - du wurdest gewarnt!
 anon = 0
 
-# if anon is disabled, then user and pass must be set.
+# wenn anon deaktiviert ist, müssen Benutzer und Passwort festgelegt werden.
 user = ""
 pass = ""
 
 [Network]
-# port 21 is the default port for an ftp server, some platforms may not
-# support using privileged ports, change if needed.
+# Port 21 ist der Standardport für einen FTP-Server, einige Plattformen
+# unterstützen möglicherweise keine privilegierten Ports, ändere ihn bei Bedarf.
 port = 21
 
-# timeout in seconds until a session is closed.
-# if 0, then no timeout is set.
-# it is recommended to set this to an actual value, eg 20.
+# Timeout in Sekunden, bis eine Sitzung geschlossen wird.
+# wenn 0, dann wird kein Timeout gesetzt.
+# es wird empfohlen, hier einen tatsächlichen Wert festzulegen, z.B. 20.
 timeout = 0
 
 [Misc]
-# use local time zone over gm (UTC) time zone.
+# lokale Zeitzone anstelle der GM (UTC) Zeitzone verwenden.
 use_localtime = 0
 
 [Log]
-# enables log output to /config/ftpsrv/log.txt
+# aktiviert die Protokollausgabe in /config/ftpsrv/log.txt
 log = 0
 
-# options specific to Nintendo Switch
+# spezifische Optionen für Nintendo Switch
 [Nx]
-# enables showing all available mount points at root "/"
-# for example, SdCard is as at "/sdmc:"
+# ermöglicht die Anzeige aller verfügbaren Einhängepunkte im Root-Verzeichnis "/"
+# zum Beispiel ist SdCard unter "/sdmc:" zu finden
 mount_devices = 0
 
-# allows save data to be writable, needs mount_devices = 1
+# erlaubt das Schreiben von Speicherdaten, benötigt mount_devices = 1
 save_writable = 0
 
-# allows for bis partitions to be mounted, needs mount_devices = 1
-# WARNING: modifying bis files can soft brick your switch!
+# erlaubt das Einhängen von bis-Partitionen, benötigt mount_devices = 1
+# WARNUNG: Das Ändern von bis-Dateien kann deine Switch soft-bricken!
 mount_bis = 0
 
-# enables led on the controller to light flash
+# aktiviert das Blinken der LED am Controller
 led = 0
 
-# options specific to Nintendo Switch App
+# spezifische Optionen für Nintendo Switch App
 [Nx-App]
 ; anon = 0
 ; user = ""
@@ -255,7 +257,7 @@ led = 0
 ; mount_bis = 0
 ; led = 0
 
-# options specific to Nintendo Switch Sysmodule
+# spezifische Optionen für Nintendo Switch Sysmodule
 [Nx-Sys]
 ; anon = 0
 ; user = ""
@@ -268,13 +270,17 @@ led = 0
 ; save_writable = 0
 ; mount_bis = 0
 ; led = 0
-```## mtp
+```
 
-mtp can be enabled via the network menu.
+---
 
-## file assoc
+## MTP
 
-sphaira has file assoc support. lets say your app supports loading .png files, then you could write an assoc file, then when using the file browser, clicking on a .png file will launch your app along with the .png file as argv[1]. This was primarly added for rom loading support for emulators / frontends such as retroarch, melonds, mgba etc.
+MTP kann über das Netzwerkmenü aktiviert werden.
+
+## Dateizuordnung
+
+sphaira unterstützt Dateizuordnungen. Angenommen, deine App unterstützt das Laden von .png-Dateien, dann könntest du eine Zuordnungsdatei schreiben. Wenn du dann im Dateibrowser auf eine .png-Datei klickst, wird deine App zusammen mit der .png-Datei als argv[1] gestartet. Dies wurde hauptsächlich für die ROM-Ladeunterstützung für Emulatoren/Frontends wie retroarch, melonds, mgba usw. hinzugefügt.
 
 ```ini
 [config]
@@ -282,13 +288,13 @@ path=/switch/your_ap.nro
 supported_extensions=jpg|png|mp4|mp3
 ```
 
-the `path` field is optional. if left out, it will use the name of the ini to find the nro. For example, if the ini is called mgba.ini, it will try to find the nro in /switch/mgb.nro and /switch/mgba/mgb.nro.
+Das Feld `path` ist optional. Wenn es weggelassen wird, wird der Name der ini-Datei verwendet, um die nro zu finden. Wenn die ini-Datei beispielsweise mgba.ini heißt, wird versucht, die nro in /switch/mgba.nro und /switch/mgba/mgba.nro zu finden.
 
-see `assets/romfs/assoc/` for more examples of file assoc entries
+Siehe `assets/romfs/assoc/` für weitere Beispiele von Dateizuordnungseinträgen
 
 ---
 
-I've added a github api downloader as a way to fetch apps that aren't on the appstore. the api is very simple, you just need to provide a name and a github url:
+Ich habe einen GitHub-API-Downloader hinzugefügt, um Apps herunterzuladen, die nicht im App-Store sind. Die API ist sehr einfach, du musst nur einen Namen und eine GitHub-URL angeben:
 
 ```json
 {
@@ -297,9 +303,9 @@ I've added a github api downloader as a way to fetch apps that aren't on the app
 }
 ```
 
-This will fetch all the downloads for the latest release.
+Dies lädt alle Downloads für die neueste Version herunter.
 
-You can also specify the name of the assets to display for download, this is useful if the app has multiple builds available for different platforms.
+Du kannst auch den Namen der Assets angeben, die zum Download angezeigt werden sollen. Dies ist nützlich, wenn die App mehrere Builds für verschiedene Plattformen anbietet.
 
 ```json
 {
@@ -316,7 +322,7 @@ You can also specify the name of the assets to display for download, this is use
 }
 ```
 
-You can also specify the output path. some apps don't push releases as a .zip, so it's its required to specify the output path:
+Du kannst auch den Ausgabepfad angeben. Einige Apps veröffentlichen keine Releases als .zip, daher ist es erforderlich, den Ausgabepfad anzugeben:
 
 ```JSON
 {
@@ -335,11 +341,11 @@ You can also specify the output path. some apps don't push releases as a .zip, s
 }
 ```
 
-Finally, you can specify an output path for a zip. this will prepend the path of all files within the zip.
+Schließlich kannst du einen Ausgabepfad für eine zip-Datei angeben. Dies wird den Pfad allen Dateien innerhalb der zip-Datei voranstellen.
 
-JSON entries are to be placed in **`/config/sphaira/github/`**. It will come bundled with a few entries for apps i have made, but won't include entries for apps that are piracy related.
+JSON-Einträge sollten in **`/config/sphaira/github/`** abgelegt werden. Es wird mit einigen Einträgen für Apps, die ich erstellt habe, gebündelt sein, aber keine Einträge für Apps enthalten, die mit Piraterie zu tun haben.
 
-No release for this yet, as there's a few more features i want to work on first, but you can try build in the github actions.
+Dafür gibt es noch keine Veröffentlichung, da ich zuerst an einigen weiteren Funktionen arbeiten möchte, aber du kannst versuchen, es in den GitHub-Actions zu bauen.
 
 ---
 
