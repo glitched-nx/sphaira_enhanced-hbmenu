@@ -134,7 +134,7 @@
   "Homebrew Options": "  hbmenu   |  Optionen",
   "Hide Sphaira": "Verstecke sphaira",
   "Install Forwarder": "Forwarder installieren",
-  "WARNING: Installing forwarders will lead to a ban!": "WARNUNG: Die Installation von Forwarder-NSP´s können zu einem Bann führen!",
+  "WARNING: Installing forwarders will lead to a ban!": "WARNUNG: Die Installation von Forwarder-NSP´s können zu einem Bann führen.\n\n             Die Installation erfolgt auf eigenes Risiko!",
   "Installing Forwarder": "Installiere Forwarder",
   "Creating Program": "Erstelle Programm",
   "Creating Control": "Erstelle Control",
