@@ -243,7 +243,7 @@
   "Restart Sphaira?": "Sphairaを再起動しますか?",
   "Failed to download update": "アップデートのダウンロード失敗",
   "Restore hbmenu?": "hbmenuに戻しますか?",
-  "Failed to find /switch/hbmenu.nro\nUse the Appstore to re-install hbmenu": "/switch/hbmemu.nroが見つかりません\nAppstoreから再インストールしてください",
+  "Failed to find /config/sphaira/hbmenu.nro\nUse the Appstore to re-install hbmenu": "/config/sphaira/hbmenu.nroが見つかりません\nAppstoreから再インストールしてください",
   "Failed to restore hbmenu, please re-download hbmenu": "hbmenuを復元できませんでした、再インストールしてください",
   "Failed to restore hbmenu, using sphaira instead": "hbmenuを復元できませんでした、sphairaを引き続き使います",
   "Restored hbmenu, closing sphaira": "hbmenuに復元されました、sphairaを終了します",

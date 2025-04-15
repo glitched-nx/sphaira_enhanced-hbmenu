@@ -243,7 +243,7 @@
   "Restart Sphaira?": "Starta om Sphaira?",
   "Failed to download update": "Misslyckades att ladda ner uppdatering",
   "Restore hbmenu?": "Återställ hbmenu?",
-  "Failed to find /switch/hbmenu.nro\nUse the Appstore to re-install hbmenu": "Kunde inte hitta /switch/hbmenu.nro\nInstallera om hbmenu från Appstore ",
+  "Failed to find /config/sphaira/hbmenu.nro\nUse the Appstore to re-install hbmenu": "Kunde inte hitta /config/sphaira/hbmenu.nro\nInstallera om hbmenu från Appstore ",
   "Failed to restore hbmenu, please re-download hbmenu": "Misslyckades med att återställa hbmenu, vänligen ladda ner hbmenu igen.",
   "Failed to restore hbmenu, using sphaira instead": "Misslyckades med att återställa hbmenu, använder istället sphaira.",
   "Restored hbmenu, closing sphaira": "Återställde hbmenu, stänger sphaira.",
@@ -253,5 +253,5 @@
   "Are you sure you want to delete ": "Är du säker på att du vill radera ",
   "Are you sure you wish to cancel?": "Är du säker på att du vill avbryta?",
   "Audio disabled due to suspended game": "Ljud är avstängt på grund av bakgrundsprogram",
-  "If this message appears repeatedly, please open an issue.": "Om detta meddelande visas upprepade gånger, vänligen öppna en felanmälan.",
+  "If this message appears repeatedly, please open an issue.": "Om detta meddelande visas upprepade gånger, vänligen öppna en felanmälan."
 }

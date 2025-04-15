@@ -243,7 +243,7 @@
   "Restart Sphaira?": "Khởi động lại Sphaira?",
   "Failed to download update": "Cập nhật thất bại",
   "Restore hbmenu?": "Khôi phục hbmenu?",
-  "Failed to find /switch/hbmenu.nro\nUse the Appstore to re-install hbmenu": "Không tìm thấy /switch/hbmenu.nro\nSử dụng AppStore để cài lại hbmenu",
+  "Failed to find /config/sphaira/hbmenu.nro\nUse the Appstore to re-install hbmenu": "Không tìm thấy /config/sphaira/hbmenu.nro\nSử dụng AppStore để cài lại hbmenu",
   "Failed to restore hbmenu, please re-download hbmenu": "Không thể khôi phục hbmenu, Vui lòng tải lại hbmenu",
   "Failed to restore hbmenu, using sphaira instead": "Không thể khôi phục hbmenu, thay vào đó sử dụng Sphira",
   "Restored hbmenu, closing sphaira": "Khôi mục hbmenu thành công, đóng sphaira",

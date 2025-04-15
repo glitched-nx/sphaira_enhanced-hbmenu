@@ -243,7 +243,7 @@
   "Restart Sphaira?": "Reiniciar sphaira?",
   "Failed to download update": "Falha ao baixar a atualização",
   "Restore hbmenu?": "Restaurar hbmenu?",
-  "Failed to find /switch/hbmenu.nro\nUse the Appstore to re-install hbmenu": "Falha ao buscar /switch/hbmenu.nro\nUse a AppStore para reinstalar o hbmenu",
+  "Failed to find /config/sphaira/hbmenu.nro\nUse the Appstore to re-install hbmenu": "Falha ao buscar /config/sphaira/hbmenu.nro\nUse a AppStore para reinstalar o hbmenu",
   "Failed to restore hbmenu, please re-download hbmenu": "Falha ao restaurar o hbmenu, baixe o hbmenu novamente",
   "Failed to restore hbmenu, using sphaira instead": "Falha ao restaurar hbmenu, usando sphaira",
   "Restored hbmenu, closing sphaira": "hbmenu restaurado, fechando sphaira",
