@@ -163,7 +163,7 @@ Das sind die meisten Funktionen, die sphaira bietet. Wenn es dir so gut gefällt
 
 ### **[Source Code](https://github.com/ITotalJustice/sphaira)**
 
-## showcase
+## Showcase
 
 |                          |                          |
 :-------------------------:|:-------------------------:
@@ -373,7 +373,7 @@ Dafür gibt es noch keine Veröffentlichung, da ich zuerst an einigen weiteren F
 - deko3d-nanovg
 - libpulsar
 - minIni
-- gbatemp
+- GBATemp
 - hb-appstore
 - haze
-- everyone who has contributed to this project!
+- Everyone who has contributed to this project!
