@@ -2,8 +2,8 @@
 
 #include "ui/menus/menu_base.hpp"
 #include "ui/scrollable_text.hpp"
+#include "ui/scrolling_text.hpp"
 #include "ui/list.hpp"
-#include "nro.hpp"
 #include "fs.hpp"
 #include <span>
 
@@ -73,6 +73,7 @@ struct EntryMenu final : MenuBase {
     EntryMenu(Entry& entry, const LazyImage& default_icon, Menu& menu);
     ~EntryMenu();
 
+    auto GetShortTitle() const -> const char* override { return "Entry"; };
     void Update(Controller* controller, TouchInfo* touch) override;
     void Draw(NVGcontext* vg, Theme* theme) override;
     // void OnFocusGained() override;
@@ -135,9 +136,10 @@ enum OrderType {
 };
 
 struct Menu final : MenuBase {
-    Menu(const std::vector<NroEntry>& nro_entries);
+    Menu();
     ~Menu();
 
+    auto GetShortTitle() const -> const char* override { return "Store"; };
     void Update(Controller* controller, TouchInfo* touch) override;
     void Draw(NVGcontext* vg, Theme* theme) override;
     void OnFocusGained() override;
@@ -162,12 +164,15 @@ struct Menu final : MenuBase {
     }
 
 private:
-    const std::vector<NroEntry>& m_nro_entries;
     std::vector<Entry> m_entries{};
     std::vector<EntryMini> m_entries_index[Filter_MAX]{};
     std::vector<EntryMini> m_entries_index_author{};
     std::vector<EntryMini> m_entries_index_search{};
     std::span<EntryMini> m_entries_current{};
+
+    ScrollingText m_scroll_name{};
+    ScrollingText m_scroll_author{};
+    ScrollingText m_scroll_version{};
 
     Filter m_filter{Filter::Filter_All};
     SortType m_sort{SortType::SortType_Updated};

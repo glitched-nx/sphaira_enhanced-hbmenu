@@ -68,7 +68,7 @@ auto apiBuildUrlListInternal(const Config& e, bool is_pack) -> std::string {
     if (is_pack) {
         cmd = "packList";
         // fields += ",themes{id,creator{display_name},details{name,description},last_updated,dl_count,like_count,target,preview{original,thumb}}";
-        fields += ",themes{id, preview{thumb}}";
+        fields += ",themes{id,preview{thumb}}";
     } else {
         cmd = "themeList";
         p0 += ",$target:String";
@@ -92,7 +92,9 @@ auto apiBuildUrlListInternal(const Config& e, bool is_pack) -> std::string {
         json += ",\"query\":\"" + e.query + "\"";
     }
 
-    return api+"("+p0+"){"+cmd+"("+p1+")"+fields+"}}&variables={"+json+"}";
+    json = curl::EscapeString('{'+json+'}');
+
+    return api+"("+p0+"){"+cmd+"("+p1+")"+fields+"}}&variables="+json;
 }
 
 auto apiBuildUrlDownloadInternal(const std::string& id, bool is_pack) -> std::string {
@@ -304,6 +306,7 @@ auto InstallTheme(ProgressBox* pbox, const PackListEntry& entry) -> bool {
             }
 
             const auto file_path = fs::AppendPath(dir_path, name);
+            pbox->NewTransfer(name);
 
             Result rc;
             if (R_FAILED(rc = fs.CreateFile(file_path, info.uncompressed_size, 0)) && rc != FsError_PathAlreadyExists) {
@@ -363,49 +366,16 @@ Menu::Menu() : MenuBase{"Themezer"_i18n} {
     fs::FsNativeSd().CreateDirectoryRecursively(CACHE_PATH);
 
     SetAction(Button::B, Action{"Back"_i18n, [this]{
-        SetPop();
+        // if search is valid, then we are in search mode, return back to normal.
+        if (!m_search.empty()) {
+            m_search.clear();
+            InvalidateAllPages();
+        } else {
+            SetPop();
+        }
     }});
 
     this->SetActions(
-        std::make_pair(Button::RIGHT, Action{[this](){
-            const auto& page = m_pages[m_page_index];
-            if (m_index < (page.m_packList.size() - 1) && (m_index + 1) % 3 != 0) {
-                SetIndex(m_index + 1);
-                App::PlaySoundEffect(SoundEffect_Scroll);
-                log_write("moved right\n");
-            }
-        }}),
-        std::make_pair(Button::LEFT, Action{[this](){
-            if (m_index != 0 && (m_index % 3) != 0) {
-                SetIndex(m_index - 1);
-                App::PlaySoundEffect(SoundEffect_Scroll);
-                log_write("moved left\n");
-            }
-        }}),
-        std::make_pair(Button::DOWN, Action{[this](){
-            const auto& page = m_pages[m_page_index];
-            if (m_list->ScrollDown(m_index, 3, page.m_packList.size())) {
-                SetIndex(m_index);
-            }
-        }}),
-        std::make_pair(Button::UP, Action{[this](){
-            const auto& page = m_pages[m_page_index];
-            if (m_list->ScrollUp(m_index, 3, page.m_packList.size())) {
-                SetIndex(m_index);
-            }
-        }}),
-        std::make_pair(Button::R2, Action{[this](){
-            const auto& page = m_pages[m_page_index];
-            if (m_list->ScrollDown(m_index, 6, page.m_packList.size())) {
-                SetIndex(m_index);
-            }
-        }}),
-        std::make_pair(Button::L2, Action{[this](){
-            const auto& page = m_pages[m_page_index];
-            if (m_list->ScrollUp(m_index, 6, page.m_packList.size())) {
-                SetIndex(m_index);
-            }
-        }}),
         std::make_pair(Button::A, Action{"Download"_i18n, [this](){
             App::Push(std::make_shared<OptionBox>(
                 "Download theme?"_i18n,
@@ -416,7 +386,7 @@ Menu::Menu() : MenuBase{"Themezer"_i18n} {
                             const auto& entry = page.m_packList[m_index];
                             const auto url = apiBuildUrlDownloadPack(entry);
 
-                            App::Push(std::make_shared<ProgressBox>("Installing "_i18n + entry.details.name, [this, &entry](auto pbox){
+                            App::Push(std::make_shared<ProgressBox>(entry.themes[0].preview.lazy_image.image, "Downloading "_i18n, entry.details.name, [this, &entry](auto pbox){
                                 return InstallTheme(pbox, entry);
                             }, [this, &entry](bool success){
                                 if (success) {
@@ -445,7 +415,7 @@ Menu::Menu() : MenuBase{"Themezer"_i18n} {
             options->Add(std::make_shared<SidebarEntryBool>("Nsfw"_i18n, m_nsfw.Get(), [this](bool& v_out){
                 m_nsfw.Set(v_out);
                 InvalidateAllPages();
-            }, "Enabled"_i18n, "Disabled"_i18n));
+            }));
 
             options->Add(std::make_shared<SidebarEntryArray>("Sort"_i18n, sort_items, [this, sort_items](s64& index_out){
                 if (m_sort.Get() != index_out) {
@@ -478,6 +448,8 @@ Menu::Menu() : MenuBase{"Themezer"_i18n} {
                 std::string out;
                 if (R_SUCCEEDED(swkbd::ShowText(out)) && !out.empty()) {
                     m_search = out;
+                    // PackListDownload();
+                    InvalidateAllPages();
                 }
             }));
         }}),
@@ -522,8 +494,8 @@ void Menu::Update(Controller* controller, TouchInfo* touch) {
         return;
     }
 
-    m_list->OnUpdate(controller, touch, page.m_packList.size(), [this](auto i) {
-        if (m_index == i) {
+    m_list->OnUpdate(controller, touch, m_index, page.m_packList.size(), [this](bool touch, auto i) {
+        if (touch && m_index == i) {
             FireAction(Button::A);
         } else {
             App::PlaySoundEffect(SoundEffect_Focus);
@@ -565,7 +537,8 @@ void Menu::Draw(NVGcontext* vg, Theme* theme) {
         auto& e = page.m_packList[pos];
 
         auto text_id = ThemeEntryID_TEXT;
-        if (pos == m_index) {
+        const auto selected = pos == m_index;
+        if (selected) {
             text_id = ThemeEntryID_TEXT_SELECTED;
             gfx::drawRectOutline(vg, theme, 4.f, v);
         } else {
@@ -632,16 +605,14 @@ void Menu::Draw(NVGcontext* vg, Theme* theme) {
                 }
             }
 
-            gfx::drawImageRounded(vg, x + xoff, y, 320, 180, image.image ? image.image : App::GetDefaultImage());
+            gfx::drawImage(vg, x + xoff, y, 320, 180, image.image ? image.image : App::GetDefaultImage(), 5);
         }
 
-        nvgSave(vg);
-        nvgIntersectScissor(vg, x, y, w - 30.f, h); // clip
-        {
-            gfx::drawTextArgs(vg, x + xoff, y + 180 + 20, 18, NVG_ALIGN_LEFT, theme->GetColour(text_id), "%s", e.details.name.c_str());
-            gfx::drawTextArgs(vg, x + xoff, y + 180 + 55, 18, NVG_ALIGN_LEFT, theme->GetColour(text_id), "%s", e.creator.display_name.c_str());
-        }
-        nvgRestore(vg);
+        const auto text_x = x + xoff;
+        const auto text_clip_w = w - 30.f - xoff;
+        const float font_size = 18;
+        m_scroll_name.Draw(vg, selected, text_x, y + 180 + 20, text_clip_w, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), e.details.name.c_str());
+        m_scroll_author.Draw(vg, selected, text_x, y + 180 + 55, text_clip_w, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), e.creator.display_name.c_str());
     });
 }
 
@@ -650,11 +621,9 @@ void Menu::OnFocusGained() {
 }
 
 void Menu::InvalidateAllPages() {
-    for (auto& e : m_pages) {
-        e.m_packList.clear();
-        e.m_ready = PageLoadState::None;
-    }
-
+    m_pages.clear();
+    m_pages.resize(1);
+    m_page_index = 0;
     PackListDownload();
 }
 

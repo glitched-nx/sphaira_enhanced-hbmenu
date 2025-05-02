@@ -2,6 +2,7 @@
 
 #include "ui/menus/menu_base.hpp"
 #include "ui/scrollable_text.hpp"
+#include "ui/scrolling_text.hpp"
 #include "ui/list.hpp"
 #include "option.hpp"
 #include <span>
@@ -132,6 +133,7 @@ struct Menu final : MenuBase {
     Menu();
     ~Menu();
 
+    auto GetShortTitle() const -> const char* override { return "Themezer"; };
     void Update(Controller* controller, TouchInfo* touch) override;
     void Draw(NVGcontext* vg, Theme* theme) override;
     void OnFocusGained() override;
@@ -159,6 +161,9 @@ private:
 
     s64 m_index{}; // where i am in the array
     std::unique_ptr<List> m_list{};
+
+    ScrollingText m_scroll_name{};
+    ScrollingText m_scroll_author{};
 
     // options
     option::OptionLong m_sort{INI_SECTION, "sort", 0};

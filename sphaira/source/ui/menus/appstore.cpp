@@ -236,18 +236,15 @@ void DrawIcon(NVGcontext* vg, const LazyImage& l, const LazyImage& d, float x, f
     bool crop = false;
     if (iw < w || ih < h) {
         rounded_image = false;
-        gfx::drawRect(vg, x, y, w, h, nvgRGB(i.first_pixel[0], i.first_pixel[1], i.first_pixel[2]), rounded);
+        gfx::drawRect(vg, x, y, w, h, nvgRGB(i.first_pixel[0], i.first_pixel[1], i.first_pixel[2]), rounded ? 5 : 0);
     }
     if (iw > w || ih > h) {
         crop = true;
         nvgSave(vg);
         nvgIntersectScissor(vg, x, y, w, h);
     }
-    if (rounded_image) {
-        gfx::drawImageRounded(vg, ix, iy, iw, ih, i.image);
-    } else {
-        gfx::drawImage(vg, ix, iy, iw, ih, i.image);
-    }
+
+    gfx::drawImage(vg, ix, iy, iw, ih, i.image, rounded_image ? 5 : 0);
     if (crop) {
         nvgRestore(vg);
     }
@@ -593,6 +590,14 @@ auto InstallApp(ProgressBox* pbox, const Entry& entry) -> bool {
     return true;
 }
 
+// case-insensitive version of str.find()
+auto FindCaseInsensitive(std::string_view base, std::string_view term) -> bool {
+    const auto it = std::search(base.cbegin(), base.cend(), term.cbegin(), term.cend(), [](char a, char b){
+        return std::toupper(a) == std::toupper(b);
+    });
+    return it != base.cend();
+}
+
 } // namespace
 
 EntryMenu::EntryMenu(Entry& entry, const LazyImage& default_icon, Menu& menu)
@@ -769,7 +774,7 @@ void EntryMenu::UpdateOptions() {
     };
 
     const auto install = [this](){
-        App::Push(std::make_shared<ProgressBox>("Installing "_i18n + m_entry.title, [this](auto pbox){
+        App::Push(std::make_shared<ProgressBox>(m_entry.image.image, "Downloading "_i18n, m_entry.title, [this](auto pbox){
             return InstallApp(pbox, m_entry);
         }, [this](bool success){
             if (success) {
@@ -782,7 +787,7 @@ void EntryMenu::UpdateOptions() {
     };
 
     const auto uninstall = [this](){
-        App::Push(std::make_shared<ProgressBox>("Uninstalling "_i18n + m_entry.title, [this](auto pbox){
+        App::Push(std::make_shared<ProgressBox>(m_entry.image.image, "Uninstalling "_i18n, m_entry.title, [this](auto pbox){
             return UninstallApp(pbox, m_entry);
         }, [this](bool success){
             if (success) {
@@ -841,59 +846,40 @@ void EntryMenu::SetIndex(s64 index) {
     }
 }
 
-auto toLower(const std::string& str) -> std::string {
-	std::string lower;
-	std::transform(str.cbegin(), str.cend(), std::back_inserter(lower), tolower);
-	return lower;
-}
-
-Menu::Menu(const std::vector<NroEntry>& nro_entries) : MenuBase{"AppStore"_i18n}, m_nro_entries{nro_entries} {
+Menu::Menu() : MenuBase{"AppStore"_i18n} {
     fs::FsNativeSd fs;
     fs.CreateDirectoryRecursively("/config/sphaira/cache/appstore/icons");
     fs.CreateDirectoryRecursively("/config/sphaira/cache/appstore/banners");
     fs.CreateDirectoryRecursively("/config/sphaira/cache/appstore/screens");
 
     this->SetActions(
-        std::make_pair(Button::RIGHT, Action{[this](){
-            if (m_entries_current.empty()) {
-                return;
-            }
+        std::make_pair(Button::B, Action{"Back"_i18n, [this](){
+            if (m_is_author) {
+                m_is_author = false;
+                if (m_is_search) {
+                    SetSearch(m_search_term);
+                } else {
+                    SetFilter(m_filter);
+                }
 
-            if (m_index < (m_entries_current.size() - 1) && (m_index + 1) % 3 != 0) {
-                SetIndex(m_index + 1);
-                App::PlaySoundEffect(SoundEffect_Scroll);
-                log_write("moved right\n");
-            }
-        }}),
-        std::make_pair(Button::LEFT, Action{[this](){
-            if (m_entries_current.empty()) {
-                return;
-            }
-
-            if (m_index != 0 && (m_index % 3) != 0) {
-                SetIndex(m_index - 1);
-                App::PlaySoundEffect(SoundEffect_Scroll);
-                log_write("moved left\n");
-            }
-        }}),
-        std::make_pair(Button::DOWN, Action{[this](){
-            if (m_list->ScrollDown(m_index, 3, m_entries_current.size())) {
-                SetIndex(m_index);
-            }
-        }}),
-        std::make_pair(Button::UP, Action{[this](){
-            if (m_list->ScrollUp(m_index, 3, m_entries_current.size())) {
-                SetIndex(m_index);
-            }
-        }}),
-        std::make_pair(Button::R2, Action{[this](){
-            if (m_list->ScrollDown(m_index, 9, m_entries_current.size())) {
-                SetIndex(m_index);
-            }
-        }}),
-        std::make_pair(Button::L2, Action{[this](){
-            if (m_list->ScrollUp(m_index, 9, m_entries_current.size())) {
-                SetIndex(m_index);
+                SetIndex(m_entry_author_jump_back);
+                if (m_entry_author_jump_back >= 9) {
+                    m_list->SetYoff((((m_entry_author_jump_back - 9) + 3) / 3) * m_list->GetMaxY());
+                } else {
+                    m_list->SetYoff(0);
+                }
+            } else if (m_is_search) {
+                m_is_search = false;
+                SetFilter(m_filter);
+                SetIndex(m_entry_search_jump_back);
+                if (m_entry_search_jump_back >= 9) {
+                    m_list->SetYoff(0);
+                    m_list->SetYoff((((m_entry_search_jump_back - 9) + 3) / 3) * m_list->GetMaxY());
+                } else {
+                    m_list->SetYoff(0);
+                }
+            } else {
+                SetPop();
             }
         }}),
         std::make_pair(Button::A, Action{"Info"_i18n, [this](){
@@ -983,8 +969,8 @@ Menu::~Menu() {
 
 void Menu::Update(Controller* controller, TouchInfo* touch) {
     MenuBase::Update(controller, touch);
-    m_list->OnUpdate(controller, touch, m_entries_current.size(), [this](auto i) {
-        if (m_index == i) {
+    m_list->OnUpdate(controller, touch, m_index, m_entries_current.size(), [this](bool touch, auto i) {
+        if (touch && m_index == i) {
             FireAction(Button::A);
         } else {
             App::PlaySoundEffect(SoundEffect_Focus);
@@ -1070,7 +1056,8 @@ void Menu::Draw(NVGcontext* vg, Theme* theme) {
         }
 
         auto text_id = ThemeEntryID_TEXT;
-        if (pos == m_index) {
+        const auto selected = pos == m_index;
+        if (selected) {
             text_id = ThemeEntryID_TEXT_SELECTED;
             gfx::drawRectOutline(vg, theme, 4.f, v);
         } else {
@@ -1083,29 +1070,27 @@ void Menu::Draw(NVGcontext* vg, Theme* theme) {
         DrawIcon(vg, e.image, m_default_image, x + 20, y + 20, 115, 115, true, image_scale);
         // gfx::drawImage(vg, x + 20, y + 20, image_size, image_size_h, image.image ? image.image : m_default_image);
 
-        nvgSave(vg);
-        nvgIntersectScissor(vg, v.x, v.y, w - 30.f, h); // clip
-        {
-            const float font_size = 18;
-            gfx::drawTextArgs(vg, x + 148, y + 45, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), e.title.c_str());
-            gfx::drawTextArgs(vg, x + 148, y + 80, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), e.author.c_str());
-            gfx::drawTextArgs(vg, x + 148, y + 115, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), e.version.c_str());
-        }
-        nvgRestore(vg);
+        const auto text_off = 148;
+        const auto text_x = x + text_off;
+        const auto text_clip_w = w - 30.f - text_off;
+        const float font_size = 18;
+        m_scroll_name.Draw(vg, selected, text_x, y + 45, text_clip_w, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), e.title.c_str());
+        m_scroll_author.Draw(vg, selected, text_x, y + 80, text_clip_w, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), e.author.c_str());
+        m_scroll_version.Draw(vg, selected, text_x, y + 115, text_clip_w, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), e.version.c_str());
 
         float i_size = 22;
         switch (e.status) {
             case EntryStatus::Get:
-                gfx::drawImageRounded(vg, x + w - 30.f, y + 110, i_size, i_size, m_get.image);
+                gfx::drawImage(vg, x + w - 30.f, y + 110, i_size, i_size, m_get.image, 15);
                 break;
             case EntryStatus::Installed:
-                gfx::drawImageRounded(vg, x + w - 30.f, y + 110, i_size, i_size, m_installed.image);
+                gfx::drawImage(vg, x + w - 30.f, y + 110, i_size, i_size, m_installed.image, 15);
                 break;
             case EntryStatus::Local:
-                gfx::drawImageRounded(vg, x + w - 30.f, y + 110, i_size, i_size, m_local.image);
+                gfx::drawImage(vg, x + w - 30.f, y + 110, i_size, i_size, m_local.image, 15);
                 break;
             case EntryStatus::Update:
-                gfx::drawImageRounded(vg, x + w - 30.f, y + 110, i_size, i_size, m_update.image);
+                gfx::drawImage(vg, x + w - 30.f, y + 110, i_size, i_size, m_update.image, 15);
                 break;
         }
     });
@@ -1308,7 +1293,6 @@ void Menu::Sort() {
 void Menu::SetFilter(Filter filter) {
     m_is_search = false;
     m_is_author = false;
-    RemoveAction(Button::B);
 
     m_filter = filter;
     m_entries_current = m_entries_index[m_filter];
@@ -1338,26 +1322,14 @@ void Menu::SetSearch(const std::string& term) {
 
     m_search_term = term;
     m_entries_index_search.clear();
-    const auto query = toLower(m_search_term);
-    const auto npos = std::string::npos;
+    const auto query = m_search_term;
 
     for (u64 i = 0; i < m_entries.size(); i++) {
         const auto& e = m_entries[i];
-        if (toLower(e.title).find(query) != npos || toLower(e.author).find(query) != npos || toLower(e.details).find(query) != npos || toLower(e.description).find(query) != npos) {
+        if (FindCaseInsensitive(e.title, query) || FindCaseInsensitive(e.author, query) || FindCaseInsensitive(e.description, query)) {
             m_entries_index_search.emplace_back(i);
         }
     }
-
-    SetAction(Button::B, Action{"Back"_i18n, [this](){
-        SetFilter(m_filter);
-        SetIndex(m_entry_search_jump_back);
-        if (m_entry_search_jump_back >= 9) {
-            m_list->SetYoff(0);
-            m_list->SetYoff((((m_entry_search_jump_back - 9) + 3) / 3) * m_list->GetMaxY());
-        } else {
-            m_list->SetYoff(0);
-        }
-    }});
 
     m_is_search = true;
     m_entries_current = m_entries_index_search;
@@ -1372,28 +1344,14 @@ void Menu::SetAuthor() {
 
     m_author_term = m_entries[m_entries_current[m_index]].author;
     m_entries_index_author.clear();
+    const auto query = m_author_term;
 
     for (u64 i = 0; i < m_entries.size(); i++) {
         const auto& e = m_entries[i];
-        if (e.author.find(m_author_term) != std::string::npos) {
+        if (FindCaseInsensitive(e.author, query)) {
             m_entries_index_author.emplace_back(i);
         }
     }
-
-    SetAction(Button::B, Action{"Back"_i18n, [this](){
-        if (m_is_search) {
-            SetSearch(m_search_term);
-        } else {
-            SetFilter(m_filter);
-        }
-
-        SetIndex(m_entry_author_jump_back);
-        if (m_entry_author_jump_back >= 9) {
-            m_list->SetYoff((((m_entry_author_jump_back - 9) + 3) / 3) * m_list->GetMaxY());
-        } else {
-            m_list->SetYoff(0);
-        }
-    }});
 
     m_is_author = true;
     m_entries_current = m_entries_index_author;

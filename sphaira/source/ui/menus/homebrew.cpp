@@ -24,44 +24,15 @@ auto GenerateStarPath(const fs::FsPath& nro_path) -> fs::FsPath {
     return out;
 }
 
+void FreeEntry(NVGcontext* vg, NroEntry& e) {
+    nvgDeleteImage(vg, e.image);
+    e.image = 0;
+}
+
 } // namespace
 
 Menu::Menu() : MenuBase{"Homebrew"_i18n} {
     this->SetActions(
-        std::make_pair(Button::RIGHT, Action{[this](){
-            if (m_index < (m_entries.size() - 1) && (m_index + 1) % 3 != 0) {
-                SetIndex(m_index + 1);
-                App::PlaySoundEffect(SoundEffect_Scroll);
-                log_write("moved right\n");
-            }
-        }}),
-        std::make_pair(Button::LEFT, Action{[this](){
-            if (m_index != 0 && (m_index % 3) != 0) {
-                SetIndex(m_index - 1);
-                App::PlaySoundEffect(SoundEffect_Scroll);
-                log_write("moved left\n");
-            }
-        }}),
-        std::make_pair(Button::DOWN, Action{[this](){
-            if (m_list->ScrollDown(m_index, 3, m_entries.size())) {
-                SetIndex(m_index);
-            }
-        }}),
-        std::make_pair(Button::UP, Action{[this](){
-            if (m_list->ScrollUp(m_index, 3, m_entries.size())) {
-                SetIndex(m_index);
-            }
-        }}),
-        std::make_pair(Button::R2, Action{[this](){
-            if (m_list->ScrollDown(m_index, 9, m_entries.size())) {
-                SetIndex(m_index);
-            }
-        }}),
-        std::make_pair(Button::L2, Action{[this](){
-            if (m_list->ScrollUp(m_index, 9, m_entries.size())) {
-                SetIndex(m_index);
-            }
-        }}),
         std::make_pair(Button::A, Action{"Launch"_i18n, [this](){
             nro_launch(m_entries[m_index].path);
         }}),
@@ -98,7 +69,7 @@ Menu::Menu() : MenuBase{"Homebrew"_i18n} {
 
                     options->Add(std::make_shared<SidebarEntryBool>("Hide Sphaira"_i18n, m_hide_sphaira.Get(), [this](bool& enable){
                         m_hide_sphaira.Set(enable);
-                    }, "Enabled"_i18n, "Disabled"_i18n));
+                    }));
                 }));
 
                 #if 0
@@ -114,11 +85,12 @@ Menu::Menu() : MenuBase{"Homebrew"_i18n} {
                         "Back"_i18n, "Delete"_i18n, 1, [this](auto op_index){
                             if (op_index && *op_index) {
                                 if (R_SUCCEEDED(fs::FsNativeSd().DeleteFile(m_entries[m_index].path))) {
+                                    FreeEntry(App::GetVg(), m_entries[m_index]);
                                     m_entries.erase(m_entries.begin() + m_index);
                                     SetIndex(m_index ? m_index - 1 : 0);
                                 }
                             }
-                        }
+                        }, m_entries[m_index].image
                     ));
                 }, true));
 
@@ -131,7 +103,7 @@ Menu::Menu() : MenuBase{"Homebrew"_i18n} {
                                     if (op_index && *op_index) {
                                         InstallHomebrew();
                                     }
-                                }
+                                }, m_entries[m_index].image
                             ));
                         } else {
                             InstallHomebrew();
@@ -148,17 +120,13 @@ Menu::Menu() : MenuBase{"Homebrew"_i18n} {
 }
 
 Menu::~Menu() {
-    auto vg = App::GetVg();
-
-    for (auto&p : m_entries) {
-        nvgDeleteImage(vg, p.image);
-    }
+    FreeEntries();
 }
 
 void Menu::Update(Controller* controller, TouchInfo* touch) {
     MenuBase::Update(controller, touch);
-    m_list->OnUpdate(controller, touch, m_entries.size(), [this](auto i) {
-        if (m_index == i) {
+    m_list->OnUpdate(controller, touch, m_index, m_entries.size(), [this](bool touch, auto i) {
+        if (touch && m_index == i) {
             FireAction(Button::A);
         } else {
             App::PlaySoundEffect(SoundEffect_Focus);
@@ -194,7 +162,8 @@ void Menu::Draw(NVGcontext* vg, Theme* theme) {
         }
 
         auto text_id = ThemeEntryID_TEXT;
-        if (pos == m_index) {
+        const auto selected = pos == m_index;
+        if (selected) {
             text_id = ThemeEntryID_TEXT_SELECTED;
             gfx::drawRectOutline(vg, theme, 4.f, v);
         } else {
@@ -202,25 +171,23 @@ void Menu::Draw(NVGcontext* vg, Theme* theme) {
         }
 
         const float image_size = 115;
-        gfx::drawImageRounded(vg, x + 20, y + 20, image_size, image_size, e.image ? e.image : App::GetDefaultImage());
+        gfx::drawImage(vg, x + 20, y + 20, image_size, image_size, e.image ? e.image : App::GetDefaultImage(), 5);
 
-        nvgSave(vg);
-        nvgIntersectScissor(vg, x, y, w - 30.f, h); // clip
-        {
-            bool has_star = false;
-            if (IsStarEnabled()) {
-                if (!e.has_star.has_value()) {
-                    e.has_star = fs::FsNativeSd().FileExists(GenerateStarPath(e.path));
-                }
-                has_star = e.has_star.value();
+        const auto text_off = 148;
+        const auto text_x = x + text_off;
+        const auto text_clip_w = w - 30.f - text_off;
+        bool has_star = false;
+        if (IsStarEnabled()) {
+            if (!e.has_star.has_value()) {
+                e.has_star = fs::FsNativeSd().FileExists(GenerateStarPath(e.path));
             }
-
-            const float font_size = 18;
-            gfx::drawTextArgs(vg, x + 148, y + 45, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), "%s%s", has_star ? "\u2605 " : "", e.GetName());
-            gfx::drawTextArgs(vg, x + 148, y + 80, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), e.GetAuthor());
-            gfx::drawTextArgs(vg, x + 148, y + 115, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), e.GetDisplayVersion());
+            has_star = e.has_star.value();
         }
-        nvgRestore(vg);
+
+        const float font_size = 18;
+        m_scroll_name.DrawArgs(vg, selected, text_x, y + 45, text_clip_w, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), "%s%s", has_star ? "\u2605 " : "", e.GetName());
+        m_scroll_author.Draw(vg, selected, text_x, y + 80, text_clip_w, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), e.GetAuthor());
+        m_scroll_version.Draw(vg, selected, text_x, y + 115, text_clip_w, font_size, NVG_ALIGN_LEFT, theme->GetColour(text_id), e.GetDisplayVersion());
     });
 }
 
@@ -272,6 +239,7 @@ void Menu::InstallHomebrew() {
 
 void Menu::ScanHomebrew() {
     TimeStamp ts;
+    FreeEntries();
     nro_scan("/switch", m_entries, m_hide_sphaira.Get());
     log_write("nros found: %zu time_taken: %.2f\n", m_entries.size(), ts.GetSecondsD());
 
@@ -426,6 +394,16 @@ void Menu::SortAndFindLastFile() {
         }
         SetIndex(index);
     }
+}
+
+void Menu::FreeEntries() {
+    auto vg = App::GetVg();
+
+    for (auto&p : m_entries) {
+        FreeEntry(vg, p);
+    }
+
+    m_entries.clear();
 }
 
 Result Menu::InstallHomebrew(const fs::FsPath& path, const NacpStruct& nacp, const std::vector<u8>& icon) {

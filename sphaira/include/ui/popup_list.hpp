@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/widget.hpp"
+#include "ui/scrolling_text.hpp"
 #include "ui/list.hpp"
 #include <optional>
 
@@ -36,8 +37,10 @@ private:
     Items m_items{};
     Callback m_callback{};
     s64 m_index{}; // index in list array
+    s64 m_starting_index{};
 
     std::unique_ptr<List> m_list{};
+    ScrollingText m_scroll_text{};
 
     float m_yoff{};
     float m_line_top{};

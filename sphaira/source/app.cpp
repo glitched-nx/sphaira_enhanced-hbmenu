@@ -1,7 +1,20 @@
-#include "ui/menus/main_menu.hpp"
-#include "ui/error_box.hpp"
 #include "ui/option_box.hpp"
 #include "ui/bubbles.hpp"
+#include "ui/sidebar.hpp"
+#include "ui/popup_list.hpp"
+#include "ui/option_box.hpp"
+#include "ui/progress_box.hpp"
+#include "ui/error_box.hpp"
+
+#include "ui/menus/main_menu.hpp"
+#include "ui/menus/irs_menu.hpp"
+#include "ui/menus/themezer.hpp"
+#include "ui/menus/ghdl.hpp"
+#include "ui/menus/usb_menu.hpp"
+#include "ui/menus/ftp_menu.hpp"
+#include "ui/menus/gc_menu.hpp"
+#include "ui/menus/game_menu.hpp"
+#include "ui/menus/appstore.hpp"
 
 #include "app.hpp"
 #include "log.hpp"
@@ -34,8 +47,33 @@ extern "C" {
 namespace sphaira {
 namespace {
 
+constexpr fs::FsPath DEFAULT_MUSIC_PATH = "/config/sphaira/themes/default_music.bfstm";
+constexpr const char* DEFAULT_MUSIC_URL = "https://files.catbox.moe/1ovji1.bfstm";
+// constexpr const char* DEFAULT_MUSIC_URL = "https://raw.githubusercontent.com/ITotalJustice/sphaira/refs/heads/master/assets/default_music.bfstm";
+
+void download_default_music() {
+    App::Push(std::make_shared<ui::ProgressBox>(0, "Downloading "_i18n, "default_music.bfstm", [](auto pbox){
+        const auto result = curl::Api().ToFile(
+            curl::Url{DEFAULT_MUSIC_URL},
+            curl::Path{DEFAULT_MUSIC_PATH},
+            curl::OnProgress{pbox->OnDownloadProgressCallback()}
+        );
+
+        return result.success;
+    }, [](bool success){
+        if (success) {
+            App::Notify("Downloaded "_i18n + "default_music.bfstm");
+            App::SetTheme(App::GetThemeIndex());
+        } else {
+            App::Push(std::make_shared<ui::ErrorBox>(
+                "Failed to download default_music.bfstm, please try again"_i18n
+            ));
+        }
+    }));
+}
+
 struct ThemeData {
-    fs::FsPath music_path{"/config/sphaira/themes/default_music.bfstm"};
+    fs::FsPath music_path{DEFAULT_MUSIC_PATH};
     std::string elements[ThemeEntryID_MAX]{};
 };
 
@@ -544,7 +582,7 @@ auto App::GetThemeIndex() -> s64 {
     return g_app->m_theme_index;
 }
 
-auto App::GetDefaultImage(int* w, int* h) -> int {
+auto App::GetDefaultImage() -> int {
     return g_app->m_default_image;
 }
 
@@ -578,10 +616,6 @@ auto App::GetInstallSdEnable() -> bool {
 
 auto App::GetInstallPrompt() -> bool {
     return g_app->m_install_prompt.Get();
-}
-
-auto App::GetThemeShuffleEnable() -> bool {
-    return g_app->m_theme_shuffle.Get();
 }
 
 auto App::GetThemeMusicEnable() -> bool {
@@ -739,10 +773,6 @@ void App::SetInstallSdEnable(bool enable) {
 
 void App::SetInstallPrompt(bool enable) {
     g_app->m_install_prompt.Set(enable);
-}
-
-void App::SetThemeShuffleEnable(bool enable) {
-    g_app->m_theme_shuffle.Set(enable);
 }
 
 void App::SetThemeMusicEnable(bool enable) {
@@ -1016,6 +1046,10 @@ void App::Draw() {
     this->queue.presentImage(this->swapchain, slot);
 }
 
+auto App::GetApp() -> App* {
+    return g_app;
+}
+
 auto App::GetVg() -> NVGcontext* {
     return g_app->vg;
 }
@@ -1108,7 +1142,6 @@ void App::CloseTheme() {
     if (m_sound_ids[SoundEffect_Music]) {
         plsrPlayerFree(m_sound_ids[SoundEffect_Music]);
         m_sound_ids[SoundEffect_Music] = nullptr;
-        plsrBFSTMClose(&m_theme.music);
     }
 
     for (auto& e : m_theme.elements) {
@@ -1138,10 +1171,12 @@ void App::LoadTheme(const ThemeMeta& meta) {
 
         // load music
         if (!theme_data.music_path.empty()) {
-            if (R_SUCCEEDED(plsrBFSTMOpen(theme_data.music_path, &m_theme.music))) {
-                if (R_SUCCEEDED(plsrPlayerLoadStream(&m_theme.music, &m_sound_ids[SoundEffect_Music]))) {
+            PLSR_BFSTM music_stream;
+            if (R_SUCCEEDED(plsrBFSTMOpen(theme_data.music_path, &music_stream))) {
+                if (R_SUCCEEDED(plsrPlayerLoadStream(&music_stream, &m_sound_ids[SoundEffect_Music]))) {
                     PlaySoundEffect(SoundEffect_Music);
                 }
+                plsrBFSTMClose(&music_stream);
             }
         }
     }
@@ -1304,16 +1339,21 @@ App::App(const char* argv0) {
         if (R_SUCCEEDED(plsrBFSAROpen("qlaunch:/sound/qlaunch.bfsar", &qlaunch_bfsar))) {
             ON_SCOPE_EXIT(plsrBFSARClose(&qlaunch_bfsar));
 
-            plsrPlayerLoadSoundByName(&qlaunch_bfsar, "SeGameIconFocus", &m_sound_ids[SoundEffect_Focus]);
-            plsrPlayerLoadSoundByName(&qlaunch_bfsar, "SeGameIconScroll", &m_sound_ids[SoundEffect_Scroll]);
-            plsrPlayerLoadSoundByName(&qlaunch_bfsar, "SeGameIconLimit", &m_sound_ids[SoundEffect_Limit]);
-            plsrPlayerLoadSoundByName(&qlaunch_bfsar, "SeStartupMenu_game", &m_sound_ids[SoundEffect_Startup]);
-            plsrPlayerLoadSoundByName(&qlaunch_bfsar, "SeGameIconAdd", &m_sound_ids[SoundEffect_Install]);
-            plsrPlayerLoadSoundByName(&qlaunch_bfsar, "SeInsertError", &m_sound_ids[SoundEffect_Error]);
+            const auto load_sound = [&](const char* name, u32 id) {
+                if (R_FAILED(plsrPlayerLoadSoundByName(&qlaunch_bfsar, name, &m_sound_ids[id]))) {
+                    log_write("[PLSR] failed to load sound effect: %s\n", name);
+                }
+            };
+
+            load_sound("SeGameIconFocus", SoundEffect_Focus);
+            load_sound("SeGameIconScroll", SoundEffect_Scroll);
+            load_sound("SeGameIconLimit", SoundEffect_Limit);
+            load_sound("StartupMenu_Game", SoundEffect_Startup);
+            load_sound("SeGameIconAdd", SoundEffect_Install);
+            load_sound("SeInsertError", SoundEffect_Error);
 
             plsrPlayerSetVolume(m_sound_ids[SoundEffect_Limit], 2.0f);
             plsrPlayerSetVolume(m_sound_ids[SoundEffect_Focus], 0.5f);
-            PlaySoundEffect(SoundEffect_Startup);
         }
     } else {
         log_write("failed to mount romfs 0x0100000000001000\n");
@@ -1323,11 +1363,7 @@ App::App(const char* argv0) {
 
     fs::FsPath theme_path{};
     constexpr fs::FsPath default_theme_path{"romfs:/themes/abyss_theme.ini"};
-    if (App::GetThemeShuffleEnable() && m_theme_meta_entries.size()) {
-        theme_path = m_theme_meta_entries[randomGet64() % m_theme_meta_entries.size()].ini_path;
-    } else {
-        ini_gets("config", "theme", default_theme_path, theme_path, sizeof(theme_path), CONFIG_PATH);
-    }
+    ini_gets("config", "theme", default_theme_path, theme_path, sizeof(theme_path), CONFIG_PATH);
 
     // try and load previous theme, default to previous version otherwise.
     ThemeMeta theme_meta;
@@ -1382,15 +1418,6 @@ App::App(const char* argv0) {
     const long old_launch_count = ini_getl(GetExePath(), "launch_count", 0, App::PLAYLOG_PATH);
     ini_putl(GetExePath(), "launch_count", old_launch_count + 1, App::PLAYLOG_PATH);
 
-    s64 sd_free_space;
-    if (R_SUCCEEDED(fs.GetFreeSpace("/", &sd_free_space))) {
-        log_write("sd_free_space: %zd\n", sd_free_space);
-    }
-    s64 sd_total_space;
-    if (R_SUCCEEDED(fs.GetTotalSpace("/", &sd_total_space))) {
-        log_write("sd_total_space: %zd\n", sd_total_space);
-    }
-
     // load default image
     if (R_SUCCEEDED(romfsInit())) {
         ON_SCOPE_EXIT(romfsExit());
@@ -1400,8 +1427,33 @@ App::App(const char* argv0) {
         }
     }
 
-    // soon (tm)
-    // ui::bubble::Init();
+    struct EventDay {
+        u8 day;
+        u8 month;
+    };
+
+    static constexpr EventDay event_days[] = {
+        { .day = 1, .month = 1 }, // New years
+
+        { .day = 3, .month = 3 }, // March 3 (switch 1)
+        { .day = 10, .month = 5 }, // June 10 (switch 2)
+        { .day = 15, .month = 5 }, // June 15
+
+        { .day = 25, .month = 12 }, // Christmas
+        { .day = 26, .month = 12 },
+        { .day = 27, .month = 12 },
+        { .day = 28, .month = 12 },
+    };
+
+    const auto time = std::time(nullptr);
+    const auto tm = std::localtime(&time);
+
+    for (auto e : event_days) {
+        if (e.day == tm->tm_mday && e.month == (tm->tm_mon + 1)) {
+            ui::bubble::Init();
+            break;
+        }
+    }
 
     App::Push(std::make_shared<ui::menu::main::MainMenu>());
     log_write("finished app constructor\n");
@@ -1418,6 +1470,214 @@ void App::PlaySoundEffect(SoundEffect effect) {
         return;
     }
     plsrPlayerPlay(id);
+}
+
+void App::DisplayThemeOptions(bool left_side) {
+    ui::SidebarEntryArray::Items theme_items{};
+    const auto theme_meta = App::GetThemeMetaList();
+    for (auto& p : theme_meta) {
+        theme_items.emplace_back(p.name);
+    }
+
+    auto options = std::make_shared<ui::Sidebar>("Theme Options"_i18n, left_side ? ui::Sidebar::Side::LEFT : ui::Sidebar::Side::RIGHT);
+    ON_SCOPE_EXIT(App::Push(options));
+
+    options->Add(std::make_shared<ui::SidebarEntryArray>("Select Theme"_i18n, theme_items, [](s64& index_out){
+        App::SetTheme(index_out);
+    }, App::GetThemeIndex()));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Music"_i18n, App::GetThemeMusicEnable(), [](bool& enable){
+        App::SetThemeMusicEnable(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("12 Hour Time"_i18n, App::Get12HourTimeEnable(), [](bool& enable){
+        App::Set12HourTimeEnable(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryCallback>("Download Default Music"_i18n, [](){
+        // check if we already have music
+        if (fs::FileExists(DEFAULT_MUSIC_PATH)) {
+            App::Push(std::make_shared<ui::OptionBox>(
+                "Overwrite current default music?"_i18n,
+                "No"_i18n, "Yes"_i18n, 0, [](auto op_index){
+                    if (op_index && *op_index) {
+                        download_default_music();
+                    }
+                }
+            ));
+
+        } else {
+            download_default_music();
+        }
+    }));
+}
+
+void App::DisplayNetworkOptions(bool left_side) {
+
+}
+
+void App::DisplayMiscOptions(bool left_side) {
+    auto options = std::make_shared<ui::Sidebar>("Misc Options"_i18n, left_side ? ui::Sidebar::Side::LEFT : ui::Sidebar::Side::RIGHT);
+    ON_SCOPE_EXIT(App::Push(options));
+
+    const auto push_if_not_same = [&]<typename T>(const char* name, const char* title){
+        if (g_app->m_right_side_menu.Get() != name) {
+            options->Add(std::make_shared<ui::SidebarEntryCallback>(i18n::get(title), [](){
+                App::Push(std::make_shared<T>());
+            }));
+        }
+    };
+
+    push_if_not_same.template operator()<ui::menu::appstore::Menu>("Appstore", "Appstore");
+    push_if_not_same.template operator()<ui::menu::game::Menu>("Games", "Games");
+    push_if_not_same.template operator()<ui::menu::themezer::Menu>("Themezer", "Themezer");
+    push_if_not_same.template operator()<ui::menu::gh::Menu>("GitHub", "GitHub");
+    if (App::GetInstallEnable()) {
+        push_if_not_same.template operator()<ui::menu::ftp::Menu>("FTP", "FTP Install");
+        push_if_not_same.template operator()<ui::menu::usb::Menu>("USB", "USB Install");
+        push_if_not_same.template operator()<ui::menu::gc::Menu>("GameCard", "GameCard Install");
+    }
+    push_if_not_same.template operator()<ui::menu::irs::Menu>("IRS", "IRS (Infrared Joycon Camera)");
+}
+
+void App::DisplayAdvancedOptions(bool left_side) {
+    auto options = std::make_shared<ui::Sidebar>("Advanced Options"_i18n, left_side ? ui::Sidebar::Side::LEFT : ui::Sidebar::Side::RIGHT);
+    ON_SCOPE_EXIT(App::Push(options));
+
+    ui::SidebarEntryArray::Items text_scroll_speed_items;
+    text_scroll_speed_items.push_back("Slow"_i18n);
+    text_scroll_speed_items.push_back("Normal"_i18n);
+    text_scroll_speed_items.push_back("Fast"_i18n);
+
+    static const char* menu_names[]{
+        "Appstore",
+        "Games",
+        "GitHub",
+        "IRS",
+    };
+
+    ui::SidebarEntryArray::Items right_side_menu_items;
+    for (auto& str : menu_names) {
+        right_side_menu_items.push_back(i18n::get(str));
+    }
+
+    const auto it = std::find(right_side_menu_items.cbegin(), right_side_menu_items.cend(), g_app->m_right_side_menu.Get());
+    if (it == right_side_menu_items.cend()) {
+        g_app->m_right_side_menu.Set(menu_names[0]);
+    }
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Logging"_i18n, App::GetLogEnable(), [](bool& enable){
+        App::SetLogEnable(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Replace hbmenu on exit"_i18n, App::GetReplaceHbmenuEnable(), [](bool& enable){
+        App::SetReplaceHbmenuEnable(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryArray>("Text scroll speed"_i18n, text_scroll_speed_items, [](s64& index_out){
+        App::SetTextScrollSpeed(index_out);
+    }, App::GetTextScrollSpeed()));
+
+    options->Add(std::make_shared<ui::SidebarEntryArray>("Set right-side menu"_i18n, right_side_menu_items, [](s64& index_out){
+        const auto e = menu_names[index_out];
+        if (g_app->m_right_side_menu.Get() != e) {
+            g_app->m_right_side_menu.Set(e);
+            App::Push(std::make_shared<ui::OptionBox>(
+                "Press OK to restart Sphaira"_i18n, "OK"_i18n, [](auto){
+                    App::ExitRestart();
+                }
+            ));
+        }
+    }, g_app->m_right_side_menu.Get()));
+
+    options->Add(std::make_shared<ui::SidebarEntryCallback>("Install options"_i18n, [left_side](){
+        App::DisplayInstallOptions(left_side);
+    }));
+}
+
+void App::DisplayInstallOptions(bool left_side) {
+    auto options = std::make_shared<ui::Sidebar>("Install Options"_i18n, left_side ? ui::Sidebar::Side::LEFT : ui::Sidebar::Side::RIGHT);
+    ON_SCOPE_EXIT(App::Push(options));
+
+    ui::SidebarEntryArray::Items install_items;
+    install_items.push_back("System memory"_i18n);
+    install_items.push_back("microSD card"_i18n);
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Enable"_i18n, App::GetApp()->m_install.Get(), [](bool& enable){
+        App::GetApp()->m_install.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Show install warning"_i18n, App::GetApp()->m_install_prompt.Get(), [](bool& enable){
+        App::GetApp()->m_install_prompt.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryArray>("Install location"_i18n, install_items, [](s64& index_out){
+        App::SetInstallSdEnable(index_out);
+    }, (s64)App::GetInstallSdEnable()));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Boost CPU clock"_i18n, App::GetApp()->m_boost_mode.Get(), [](bool& enable){
+        App::GetApp()->m_boost_mode.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Allow downgrade"_i18n, App::GetApp()->m_allow_downgrade.Get(), [](bool& enable){
+        App::GetApp()->m_allow_downgrade.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Skip if already installed"_i18n, App::GetApp()->m_skip_if_already_installed.Get(), [](bool& enable){
+        App::GetApp()->m_skip_if_already_installed.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Ticket only"_i18n, App::GetApp()->m_ticket_only.Get(), [](bool& enable){
+        App::GetApp()->m_ticket_only.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Skip base"_i18n, App::GetApp()->m_skip_base.Get(), [](bool& enable){
+        App::GetApp()->m_skip_base.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Skip patch"_i18n, App::GetApp()->m_skip_patch.Get(), [](bool& enable){
+        App::GetApp()->m_skip_patch.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Skip dlc"_i18n, App::GetApp()->m_skip_addon.Get(), [](bool& enable){
+        App::GetApp()->m_skip_addon.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Skip data patch"_i18n, App::GetApp()->m_skip_data_patch.Get(), [](bool& enable){
+        App::GetApp()->m_skip_data_patch.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Skip ticket"_i18n, App::GetApp()->m_skip_ticket.Get(), [](bool& enable){
+        App::GetApp()->m_skip_ticket.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("skip NCA hash verify"_i18n, App::GetApp()->m_skip_nca_hash_verify.Get(), [](bool& enable){
+        App::GetApp()->m_skip_nca_hash_verify.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Skip RSA header verify"_i18n, App::GetApp()->m_skip_rsa_header_fixed_key_verify.Get(), [](bool& enable){
+        App::GetApp()->m_skip_rsa_header_fixed_key_verify.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Skip RSA NPDM verify"_i18n, App::GetApp()->m_skip_rsa_npdm_fixed_key_verify.Get(), [](bool& enable){
+        App::GetApp()->m_skip_rsa_npdm_fixed_key_verify.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Ignore distribution bit"_i18n, App::GetApp()->m_ignore_distribution_bit.Get(), [](bool& enable){
+        App::GetApp()->m_ignore_distribution_bit.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Convert to standard crypto"_i18n, App::GetApp()->m_convert_to_standard_crypto.Get(), [](bool& enable){
+        App::GetApp()->m_convert_to_standard_crypto.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Lower master key"_i18n, App::GetApp()->m_lower_master_key.Get(), [](bool& enable){
+        App::GetApp()->m_lower_master_key.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Lower system version"_i18n, App::GetApp()->m_lower_system_version.Get(), [](bool& enable){
+        App::GetApp()->m_lower_system_version.Set(enable);
+    }));
 }
 
 App::~App() {
