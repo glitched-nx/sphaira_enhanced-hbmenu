@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.13)
 
-set(sphaira_VERSION 0.10.3)
+set(sphaira_VERSION 0.11.3)
 
 project(sphaira
     VERSION ${sphaira_VERSION}
@@ -31,11 +31,7 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
-if (GIT_DIRTY)
-    set(sphaira_VERSION_HASH "${sphaira_VERSION} ${GIT_COMMIT}")
-else()
-    set(sphaira_VERSION_HASH "${sphaira_VERSION}")
-endif()
+set(sphaira_VERSION_HASH "${sphaira_VERSION} [${GIT_COMMIT}]")
 
 add_executable(sphaira
     source/ui/menus/appstore.cpp
@@ -67,6 +63,7 @@ add_executable(sphaira
 
     source/app.cpp
     source/download.cpp
+    source/dumper.cpp
     source/option.cpp
     source/evman.cpp
     source/fs.cpp
@@ -78,8 +75,11 @@ add_executable(sphaira
     source/nxlink.cpp
     source/owo.cpp
     source/swkbd.cpp
+    source/web.cpp
+    source/hasher.cpp
     source/i18n.cpp
     source/ftpsrv_helper.cpp
+    source/threaded_file_transfer.cpp
 
     source/usb/base.cpp
     source/usb/usbds.cpp
@@ -90,7 +90,6 @@ add_executable(sphaira
     source/yati/container/nsp.cpp
     source/yati/container/xci.cpp
     source/yati/source/file.cpp
-    source/yati/source/stdio.cpp
     source/yati/source/usb.cpp
     source/yati/source/stream.cpp
     source/yati/source/stream_file.cpp
@@ -146,8 +145,6 @@ target_compile_options(sphaira PRIVATE
     -Wimplicit-fallthrough=5
     -Wsuggest-final-types
     -Wuninitialized
-    -fimplicit-constexpr
-    -Wmissing-requires
 )
 
 include(FetchContent)
@@ -156,13 +153,13 @@ set(FETCHCONTENT_QUIET FALSE)
 FetchContent_Declare(ftpsrv
     GIT_REPOSITORY https://github.com/ITotalJustice/ftpsrv.git
     # GIT_TAG 1.2.2
-    GIT_TAG f8a30fd
+    GIT_TAG 8c18431
     SOURCE_SUBDIR NONE
 )
 
 FetchContent_Declare(libhaze
     GIT_REPOSITORY https://github.com/ITotalJustice/libhaze.git
-    GIT_TAG 04f1526
+    GIT_TAG 8e16df2
 )
 
 FetchContent_Declare(libpulsar
@@ -196,6 +193,11 @@ FetchContent_Declare(zstd
     SOURCE_SUBDIR build/cmake
 )
 
+FetchContent_Declare(libusbhsfs
+    GIT_REPOSITORY https://github.com/ITotalJustice/libusbhsfs.git
+    GIT_TAG db2bf2a
+)
+
 set(USE_NEW_ZSTD ON)
 
 set(ZSTD_BUILD_STATIC ON)
@@ -210,7 +212,7 @@ set(ZSTD_BUILD_TESTS OFF)
 
 set(MININI_LIB_NAME minIni)
 set(MININI_USE_STDIO ON)
-set(MININI_USE_NX ON)
+set(MININI_USE_NX OFF)
 set(MININI_USE_FLOAT OFF)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
@@ -234,6 +236,10 @@ set(YYJSON_DISABLE_NON_STANDARD ON)
 set(YYJSON_DISABLE_UTF8_VALIDATION ON)
 set(YYJSON_DISABLE_UNALIGNED_MEMORY_ACCESS OFF)
 
+# enable this if you want ntfs and ext4 support, at the cost of a huge final binary size.
+set(USBHSFS_GPL OFF)
+set(USBHSFS_SXOS_DISABLE ON)
+
 FetchContent_MakeAvailable(
     ftpsrv
     libhaze
@@ -243,26 +249,27 @@ FetchContent_MakeAvailable(
     minIni
     yyjson
     zstd
+    libusbhsfs
 )
 
 set(FTPSRV_LIB_BUILD TRUE)
 set(FTPSRV_LIB_SOCK_UNISTD TRUE)
 set(FTPSRV_LIB_VFS_CUSTOM ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs_nx.h)
 set(FTPSRV_LIB_PATH_SIZE 0x301)
-set(FTPSRV_LIB_SESSIONS 32)
+set(FTPSRV_LIB_SESSIONS 16)
 set(FTPSRV_LIB_BUF_SIZE 1024*64)
-
-# workaround until a64 container has latest libnx release.
-if (NOT DEFINED USE_VFS_GC)
-    set(USE_VFS_GC TRUE)
-endif()
 
 set(FTPSRV_LIB_CUSTOM_DEFINES
     USE_VFS_SAVE=$<BOOL:TRUE>
     USE_VFS_STORAGE=$<BOOL:TRUE>
-    USE_VFS_GC=$<BOOL:${USE_VFS_GC}>
-    USE_VFS_USBHSFS=$<BOOL:FALSE>
+    # disabled as it may conflict with the gamecard menu.
+    USE_VFS_GC=$<BOOL:FALSE>
+    USE_VFS_USBHSFS=$<BOOL:TRUE>
     VFS_NX_BUFFER_IO=$<BOOL:TRUE>
+    # let sphaira handle init / closing of the hdd.
+    USE_VFS_USBHSFS_INIT=$<BOOL:FALSE>
+    # disable romfs mounting as otherwise we cannot write / modify sphaira.nro
+    USE_VFS_ROMFS=$<BOOL:FALSE>
 )
 
 add_subdirectory(${ftpsrv_SOURCE_DIR} binary_dir)
@@ -274,17 +281,13 @@ add_library(ftpsrv_helper
     ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_fs.c
     ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_save.c
     ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_storage.c
+    ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_stdio.c
+    ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_hdd.c
     ${ftpsrv_SOURCE_DIR}/src/platform/nx/utils.c
 )
 
-target_link_libraries(ftpsrv_helper PUBLIC ftpsrv)
+target_link_libraries(ftpsrv_helper PUBLIC ftpsrv libusbhsfs)
 target_include_directories(ftpsrv_helper PUBLIC ${ftpsrv_SOURCE_DIR}/src/platform)
-
-if (USE_VFS_GC)
-    target_sources(ftpsrv_helper PRIVATE
-        ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_gc.c
-    )
-endif()
 
 add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE ${stb_SOURCE_DIR})
@@ -303,9 +306,9 @@ if (NOT USE_NEW_ZSTD)
 endif()
 
 set_target_properties(sphaira PROPERTIES
-    C_STANDARD 11
+    C_STANDARD 23
     C_EXTENSIONS ON
-    CXX_STANDARD 23
+    CXX_STANDARD 26
     CXX_EXTENSIONS ON
 )
 
@@ -317,6 +320,7 @@ target_link_libraries(sphaira PRIVATE
     nanovg
     stb
     yyjson
+    # libusbhsfs
 
     ${minizip_lib}
     ZLIB::ZLIB
@@ -345,12 +349,13 @@ file(COPY ${CMAKE_SOURCE_DIR}/assets/romfs DESTINATION ${CMAKE_CURRENT_BINARY_DI
 # create assets target
 dkp_add_asset_target(sphaira_romfs ${CMAKE_CURRENT_BINARY_DIR}/romfs)
 
-# add hbl exefs to romfs, used for forwarders
-dkp_install_assets(sphaira_romfs
-    DESTINATION exefs
-    TARGETS
-        hbl_nso
-        hbl_npdm
+# wait until hbl is built first as we need the exefs to embed
+add_dependencies(sphaira hbl_nso hbl_npdm)
+
+# set the embed path for assets and hbl
+target_compile_options(sphaira PRIVATE
+    --embed-dir=${CMAKE_SOURCE_DIR}/assets/embed
+    --embed-dir=${CMAKE_BINARY_DIR}/hbl
 )
 
 # add nanovg shaders to romfs

@@ -142,7 +142,7 @@ void StreamFtp::Disable() {
     m_active = false;
 }
 
-Menu::Menu() : MenuBase{"FTP Install (EXPERIMENTAL)"_i18n} {
+Menu::Menu(u32 flags) : MenuBase{"FTP Install (EXPERIMENTAL)"_i18n, flags} {
     SetAction(Button::B, Action{"Back"_i18n, [this](){
         SetPop();
     }});
@@ -150,6 +150,8 @@ Menu::Menu() : MenuBase{"FTP Install (EXPERIMENTAL)"_i18n} {
     SetAction(Button::X, Action{"Options"_i18n, [this](){
         App::DisplayInstallOptions(false);
     }});
+
+    App::SetAutoSleepDisabled(true);
 
     mutexInit(&m_mutex);
     m_was_ftp_enabled = App::GetFtpEnable();
@@ -182,6 +184,7 @@ Menu::~Menu() {
         App::SetFtpEnable(false);
     }
 
+    App::SetAutoSleepDisabled(false);
     log_write("closing data!!!!\n");
 }
 
@@ -199,25 +202,25 @@ void Menu::Update(Controller* controller, TouchInfo* touch) {
             log_write("set to progress\n");
             m_state = State::Progress;
             log_write("got connection\n");
-            App::Push(std::make_shared<ui::ProgressBox>(0, "Installing "_i18n, "", [this](auto pbox) mutable -> bool {
+            App::Push(std::make_shared<ui::ProgressBox>(0, "Installing "_i18n, "", [this](auto pbox) -> Result {
                 log_write("inside progress box\n");
                 const auto rc = yati::InstallFromSource(pbox, m_source, m_source->m_path);
                 if (R_FAILED(rc)) {
                     m_source->Disable();
-                    return false;
+                    R_THROW(rc);
                 }
 
-                log_write("progress box is done\n");
-                return true;
-            }, [this](bool result){
+                R_SUCCEED();
+            }, [this](Result rc){
+                App::PushErrorBox(rc, "Ftp install failed!"_i18n);
+
                 mutexLock(&m_mutex);
                 ON_SCOPE_EXIT(mutexUnlock(&m_mutex));
 
-                if (result) {
+                if (R_SUCCEEDED(rc)) {
                     App::Notify("Ftp install success!"_i18n);
                     m_state = State::Done;
                 } else {
-                    App::Notify("Ftp install failed!"_i18n);
                     m_state = State::Failed;
                 }
             }));
@@ -236,9 +239,10 @@ void Menu::Draw(NVGcontext* vg, Theme* theme) {
     mutexLock(&m_mutex);
     ON_SCOPE_EXIT(mutexUnlock(&m_mutex));
 
-    if (m_ip) {
-        if (m_type == NifmInternetConnectionType_WiFi) {
-            SetSubHeading("Connection Type: WiFi | Strength: "_i18n + std::to_string(m_strength));
+    const auto pdata = GetPolledData();
+    if (pdata.ip) {
+        if (pdata.type == NifmInternetConnectionType_WiFi) {
+            SetSubHeading("Connection Type: WiFi | Strength: "_i18n + std::to_string(pdata.strength));
         } else {
             SetSubHeading("Connection Type: Ethernet"_i18n);
         }
@@ -261,15 +265,15 @@ void Menu::Draw(NVGcontext* vg, Theme* theme) {
         gfx::drawTextArgs(vg, bounds[2], start_y, font_size, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE, theme->GetColour(ThemeEntryID_TEXT_SELECTED), __VA_ARGS__); \
         start_y += spacing;
 
-    if (m_ip) {
-        draw("Host:"_i18n, " %u.%u.%u.%u", m_ip&0xFF, (m_ip>>8)&0xFF, (m_ip>>16)&0xFF, (m_ip>>24)&0xFF);
+    if (pdata.ip) {
+        draw("Host:"_i18n, " %u.%u.%u.%u", pdata.ip&0xFF, (pdata.ip>>8)&0xFF, (pdata.ip>>16)&0xFF, (pdata.ip>>24)&0xFF);
         draw("Port:"_i18n, " %u", m_port);
         if (!m_anon) {
             draw("Username:"_i18n, " %s", m_user);
             draw("Password:"_i18n, " %s", m_pass);
         }
 
-        if (m_type == NifmInternetConnectionType_WiFi) {
+        if (pdata.type == NifmInternetConnectionType_WiFi) {
             NifmNetworkProfileData profile{};
             if (R_SUCCEEDED(nifmGetCurrentNetworkProfile(&profile))) {
                 const auto& settings = profile.wireless_setting_data;

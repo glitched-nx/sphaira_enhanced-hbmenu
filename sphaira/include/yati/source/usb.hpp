@@ -11,7 +11,7 @@
 namespace sphaira::yati::source {
 
 struct Usb final : Base {
-    enum { USBModule = 523 };
+    enum { USBModule = 508 };
 
     enum : Result {
         Result_BadMagic = MAKERESULT(USBModule, 0),
@@ -24,6 +24,7 @@ struct Usb final : Base {
     Usb(u64 transfer_timeout);
     ~Usb();
 
+    bool IsStream() const override;
     Result Read(void* buf, s64 off, s64 size, u64* bytes_read) override;
     Result Finished(u64 timeout);
 
@@ -45,6 +46,7 @@ private:
 private:
     std::unique_ptr<usb::UsbDs> m_usb;
     std::string m_transfer_file_name{};
+    u8 m_flags{};
 };
 
 } // namespace sphaira::yati::source

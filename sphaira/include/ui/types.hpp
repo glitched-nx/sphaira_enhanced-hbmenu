@@ -179,6 +179,8 @@ enum ThemeEntryID {
     ThemeEntryID_TEXT_SELECTED,
     // background colour of a selected item, can be an image (not recommended).
     ThemeEntryID_SELECTED_BACKGROUND,
+    // colour of the split screen and selected item.
+    ThemeEntryID_FOCUS,
 
     // colour of line separators in a list.
     ThemeEntryID_LINE,
@@ -299,6 +301,7 @@ enum class Button : u64 {
     UP = static_cast<u64>(HidNpadButton_AnyUp),
     DOWN = static_cast<u64>(HidNpadButton_AnyDown),
 
+    NONE = 0,
     ANY_BUTTON = A | B | X | Y | L | R | L2 | R2 | L3 | R3 | START | SELECT,
     ANY_HORIZONTAL = LEFT | RIGHT,
     ANY_VERTICAL = UP | DOWN,

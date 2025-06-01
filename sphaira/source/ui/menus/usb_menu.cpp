@@ -51,7 +51,7 @@ void thread_func(void* user) {
 
 } // namespace
 
-Menu::Menu() : MenuBase{"USB"_i18n} {
+Menu::Menu(u32 flags) : MenuBase{"USB"_i18n, flags} {
     SetAction(Button::B, Action{"Back"_i18n, [this](){
         SetPop();
     }});
@@ -77,7 +77,7 @@ Menu::Menu() : MenuBase{"USB"_i18n} {
     mutexInit(&m_mutex);
 
     if (m_state != State::Failed) {
-        threadCreate(&m_thread, thread_func, this, nullptr, 1024*32, 0x2C, 1);
+        threadCreate(&m_thread, thread_func, this, nullptr, 1024*32, PRIO_PREEMPTIVE, 1);
         threadStart(&m_thread);
     }
 }
@@ -109,31 +109,31 @@ void Menu::Update(Controller* controller, TouchInfo* touch) {
         log_write("set to progress\n");
         m_state = State::Progress;
         log_write("got connection\n");
-        App::Push(std::make_shared<ui::ProgressBox>(0, "Installing "_i18n, "", [this](auto pbox) mutable -> bool {
+        App::Push(std::make_shared<ui::ProgressBox>(0, "Installing "_i18n, "", [this](auto pbox) -> Result {
             ON_SCOPE_EXIT(m_usb_source->Finished(FINISHED_TIMEOUT));
 
             log_write("inside progress box\n");
             for (const auto& file_name : m_names) {
                 m_usb_source->SetFileNameForTranfser(file_name);
-
                 const auto rc = yati::InstallFromSource(pbox, m_usb_source, file_name);
                 if (R_FAILED(rc)) {
                     m_usb_source->SignalCancel();
                     log_write("exiting usb install\n");
-                    return false;
+                    R_THROW(rc);
                 }
 
                 App::Notify("Installed via usb"_i18n);
             }
 
-            return true;
-        }, [this](bool result){
-            if (result) {
+            R_SUCCEED();
+        }, [this](Result rc){
+            App::PushErrorBox(rc, "USB install failed!"_i18n);
+
+            if (R_SUCCEEDED(rc)) {
                 App::Notify("Usb install success!"_i18n);
                 m_state = State::Done;
                 SetPop();
             } else {
-                App::Notify("Usb install failed!"_i18n);
                 m_state = State::Failed;
             }
         }));

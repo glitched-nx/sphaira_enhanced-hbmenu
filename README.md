@@ -167,10 +167,10 @@ Das sind die meisten Funktionen, die sphaira bietet. Wenn es dir so gut gefällt
 
 |                          |                          |
 :-------------------------:|:-------------------------:
-![Img](assets/screenshots/2024121522512100-879193CD6A8B96CD00931A628B1187CB.jpg) | ![Img](assets/screenshots/2024121522514300-879193CD6A8B96CD00931A628B1187CB.jpg)
-![Img](assets/screenshots/2024121522513300-879193CD6A8B96CD00931A628B1187CB.jpg) | ![Img](assets/screenshots/2024121523084100-879193CD6A8B96CD00931A628B1187CB.jpg)
-![Img](assets/screenshots/2024121522505300-879193CD6A8B96CD00931A628B1187CB.jpg) | ![Img](assets/screenshots/2024121522502300-879193CD6A8B96CD00931A628B1187CB.jpg)
-![Img](assets/screenshots/2024121523033200-879193CD6A8B96CD00931A628B1187CB.jpg) | ![Img](assets/screenshots/2024121523070300-879193CD6A8B96CD00931A628B1187CB.jpg)
+![Img](assets/screenshots/homebrew.jpg) | ![Img](assets/screenshots/games.jpg)
+![Img](assets/screenshots/appstore.jpg) | ![Img](assets/screenshots/appstore_page.jpg)
+![Img](assets/screenshots/file_browser.jpg) | ![Img](assets/screenshots/launch_options.jpg)
+![Img](assets/screenshots/themezer.jpg) | ![Img](assets/screenshots/web.jpg)
 
 ## Fehlermeldungen
 
@@ -283,8 +283,7 @@ MTP kann über das Netzwerkmenü aktiviert werden.
 sphaira unterstützt Dateizuordnungen. Angenommen, deine App unterstützt das Laden von .png-Dateien, dann könntest du eine Zuordnungsdatei schreiben. Wenn du dann im Dateibrowser auf eine .png-Datei klickst, wird deine App zusammen mit der .png-Datei als argv[1] gestartet. Dies wurde hauptsächlich für die ROM-Ladeunterstützung für Emulatoren/Frontends wie retroarch, melonds, mgba usw. hinzugefügt.
 
 ```ini
-[config]
-path=/switch/your_ap.nro
+path=/switch/your_app.nro
 supported_extensions=jpg|png|mp4|mp3
 ```
 
@@ -383,8 +382,10 @@ You will first need to install [devkitPro](https://devkitpro.org/wiki/Getting_St
 
 Next you will need to install the dependencies:
 ```sh
-sudo pacman -S switch-dev deko3d switch-cmake switch-curl switch-glm switch-zlib
+sudo pacman -S switch-dev deko3d switch-cmake switch-curl switch-glm switch-zlib switch-mbedtls
 ```
+
+Also you need to have on your environment the packages `git`, `make`, `zip` and `cmake`
 
 Once devkitPro and all dependencies are installed, you can now build sphaira.
 
@@ -410,4 +411,5 @@ The output will be found in `build/MinSizeRel/sphaira.nro`
 - GBATemp
 - hb-appstore
 - haze
+- nxdumptool (for gamecard bin dumping and rsa verify code)
 - Everyone who has contributed to this project!

@@ -6,6 +6,7 @@
 namespace sphaira::ui {
 
 ErrorBox::ErrorBox(const std::string& message) : m_message{message} {
+    log_write("[ERROR] %s\n", m_message.c_str());
 
     m_pos.w = 770.f;
     m_pos.h = 430.f;
@@ -21,6 +22,7 @@ ErrorBox::ErrorBox(const std::string& message) : m_message{message} {
 
 ErrorBox::ErrorBox(Result code, const std::string& message) : ErrorBox{message} {
     m_code = code;
+    log_write("[ERROR] Code: 0x%X Module: %u Description: %u\n", R_VALUE(code), R_MODULE(code), R_DESCRIPTION(code));
 }
 
 auto ErrorBox::Update(Controller* controller, TouchInfo* touch) -> void {
@@ -37,7 +39,7 @@ auto ErrorBox::Draw(NVGcontext* vg, Theme* theme) -> void {
     gfx::drawTextArgs(vg, center_x, 180, 63, NVG_ALIGN_CENTER | NVG_ALIGN_TOP, theme->GetColour(ThemeEntryID_ERROR), "\uE140");
     if (m_code.has_value()) {
         const auto code = m_code.value();
-        gfx::drawTextArgs(vg, center_x, 270, 25, NVG_ALIGN_CENTER | NVG_ALIGN_TOP, theme->GetColour(ThemeEntryID_TEXT), "Code: 0x%X Module: %u Description: 0x%X Value: 0x%X", code, R_MODULE(code), R_DESCRIPTION(code), R_VALUE(code));
+        gfx::drawTextArgs(vg, center_x, 270, 25, NVG_ALIGN_CENTER | NVG_ALIGN_TOP, theme->GetColour(ThemeEntryID_TEXT), "Code: 0x%X Module: %u Description: 0x%X", R_VALUE(code), R_MODULE(code), R_DESCRIPTION(code));
     } else {
         gfx::drawTextArgs(vg, center_x, 270, 25, NVG_ALIGN_CENTER | NVG_ALIGN_TOP, theme->GetColour(ThemeEntryID_TEXT), "An error occurred"_i18n.c_str());
     }

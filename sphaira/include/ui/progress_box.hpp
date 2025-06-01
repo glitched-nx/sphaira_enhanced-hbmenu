@@ -1,6 +1,7 @@
 #pragma once
 
-#include "widget.hpp"
+#include "ui/widget.hpp"
+#include "ui/scrolling_text.hpp"
 #include "fs.hpp"
 #include <functional>
 #include <span>
@@ -8,16 +9,16 @@
 namespace sphaira::ui {
 
 struct ProgressBox;
-using ProgressBoxCallback = std::function<bool(ProgressBox*)>;
-using ProgressBoxDoneCallback = std::function<void(bool success)>;
+using ProgressBoxCallback = std::function<Result(ProgressBox*)>;
+using ProgressBoxDoneCallback = std::function<void(Result rc)>;
 
 struct ProgressBox final : Widget {
     ProgressBox(
         int image,
         const std::string& action,
         const std::string& title,
-        ProgressBoxCallback callback, ProgressBoxDoneCallback done = [](bool success){},
-        int cpuid = 1, int prio = 0x2C, int stack_size = 1024*128
+        ProgressBoxCallback callback, ProgressBoxDoneCallback done = [](Result rc){},
+        int cpuid = 1, int prio = PRIO_PREEMPTIVE, int stack_size = 1024*128
     );
     ~ProgressBox();
 
@@ -28,14 +29,23 @@ struct ProgressBox final : Widget {
     auto NewTransfer(const std::string& transfer) -> ProgressBox&;
     auto UpdateTransfer(s64 offset, s64 size) -> ProgressBox&;
     // not const in order to avoid copy by using std::swap
+    auto SetImage(int image) -> ProgressBox&;
     auto SetImageData(std::vector<u8>& data) -> ProgressBox&;
     auto SetImageDataConst(std::span<const u8> data) -> ProgressBox&;
+
     void RequestExit();
     auto ShouldExit() -> bool;
+    auto ShouldExitResult() -> Result;
 
     // helper functions
+    auto CopyFile(fs::Fs* fs_src, fs::Fs* fs_dst, const fs::FsPath& src, const fs::FsPath& dst) -> Result;
+    auto CopyFile(fs::Fs* fs, const fs::FsPath& src, const fs::FsPath& dst) -> Result;
     auto CopyFile(const fs::FsPath& src, const fs::FsPath& dst) -> Result;
     void Yield();
+
+    auto GetCpuId() const {
+        return m_cpuid;
+    }
 
     auto OnDownloadProgressCallback() {
         return [this](s64 dltotal, s64 dlnow, s64 ultotal, s64 ulnow){
@@ -60,7 +70,7 @@ public:
     struct ThreadData {
         ProgressBox* pbox{};
         ProgressBoxCallback callback{};
-        bool result{};
+        Result result{};
     };
 
 private:
@@ -79,8 +89,14 @@ private:
     s64 m_speed{};
     TimeStamp m_timestamp{};
     std::vector<u8> m_image_data{};
+    int m_image_pending{};
+    bool m_is_image_pending{};
     // shared data end.
 
+    ScrollingText m_scroll_title{};
+    ScrollingText m_scroll_transfer{};
+
+    int m_cpuid{};
     int m_image{};
     bool m_own_image{};
 };

@@ -3,6 +3,7 @@
 #include "defines.hpp"
 #include "evman.hpp"
 #include "fs.hpp"
+#include "app.hpp"
 
 #include <switch.h>
 #include <cstring>
@@ -31,7 +32,7 @@ namespace {
 constexpr auto API_AGENT = "TotalJustice";
 constexpr u64 CHUNK_SIZE = 1024*1024;
 constexpr auto MAX_THREADS = 4;
-constexpr int THREAD_PRIO = 0x2C;
+constexpr int THREAD_PRIO = PRIO_PREEMPTIVE;
 constexpr int THREAD_CORE = 1;
 
 std::atomic_bool g_running{};
@@ -45,13 +46,13 @@ struct UploadStruct {
     std::span<const u8> data;
     s64 offset{};
     s64 size{};
-    FsFile f{};
+    fs::File f{};
 };
 
 struct DataStruct {
     std::vector<u8> data;
     s64 offset{};
-    FsFile f{};
+    fs::File f{};
     s64 file_offset{};
 };
 
@@ -68,6 +69,10 @@ auto WebdavCreateFolder(CURL* curl, const Api& e) -> bool;
 auto generate_key_from_path(const fs::FsPath& path) -> std::string {
     const auto key = crc32Calculate(path.s, path.size());
     return std::to_string(key);
+}
+
+void Yield() {
+    svcSleepThread(YieldType_WithoutCoreMigration);
 }
 
 struct Cache {
@@ -258,6 +263,7 @@ struct ThreadEntry {
 
         ueventCreate(&m_uevent, true);
         R_TRY(threadCreate(&m_thread, ThreadFunc, this, nullptr, 1024*32, THREAD_PRIO, THREAD_CORE));
+        R_TRY(svcSetThreadCoreMask(m_thread.handle, THREAD_CORE, THREAD_AFFINITY_DEFAULT(THREAD_CORE)));
         R_TRY(threadStart(&m_thread));
         R_SUCCEED();
     }
@@ -370,7 +376,7 @@ auto ProgressCallbackFunc1(void *clientp, curl_off_t dltotal, curl_off_t dlnow, 
         return 1;
     }
 
-    svcSleepThread(YieldType_WithoutCoreMigration);
+    Yield();
     return 0;
 }
 
@@ -385,7 +391,7 @@ auto ProgressCallbackFunc2(void *clientp, curl_off_t dltotal, curl_off_t dlnow, 
         return 1;
     }
 
-    svcSleepThread(YieldType_WithoutCoreMigration);
+    Yield();
     return 0;
 }
 
@@ -438,13 +444,13 @@ auto ReadFileCallback(char *ptr, size_t size, size_t nmemb, void *userp) -> size
     const auto realsize = size * nmemb;
 
     u64 bytes_read;
-    if (R_FAILED(fsFileRead(&data_struct->f, data_struct->offset, ptr, realsize, FsReadOption_None, &bytes_read))) {
+    if (R_FAILED(data_struct->f.Read(data_struct->offset, ptr, realsize, FsReadOption_None, &bytes_read))) {
         log_write("reading file error\n");
         return 0;
     }
 
     data_struct->offset += bytes_read;
-    svcSleepThread(YieldType_WithoutCoreMigration);
+    Yield();
     return bytes_read;
 }
 
@@ -460,7 +466,7 @@ auto ReadMemoryCallback(char *ptr, size_t size, size_t nmemb, void *userp) -> si
     std::memcpy(ptr, data_struct->data.data(), realsize);
     data_struct->offset += realsize;
 
-    svcSleepThread(YieldType_WithoutCoreMigration);
+    Yield();
     return realsize;
 }
 
@@ -473,7 +479,7 @@ auto ReadCustomCallback(char *ptr, size_t size, size_t nmemb, void *userp) -> si
     auto realsize = size * nmemb;
     const auto result = data_struct->m_callback(ptr, realsize);
 
-    svcSleepThread(YieldType_WithoutCoreMigration);
+    Yield();
     return result;
 }
 
@@ -494,7 +500,7 @@ auto WriteMemoryCallback(void *contents, size_t size, size_t num_files, void *us
     std::memcpy(data_struct->data.data() + data_struct->offset, contents, realsize);
     data_struct->offset += realsize;
 
-    svcSleepThread(YieldType_WithoutCoreMigration);
+    Yield();
     return realsize;
 }
 
@@ -508,7 +514,7 @@ auto WriteFileCallback(void *contents, size_t size, size_t num_files, void *user
 
     // flush data if incomming data would overflow the buffer
     if (data_struct->offset && data_struct->data.size() < data_struct->offset + realsize) {
-        if (R_FAILED(fsFileWrite(&data_struct->f, data_struct->file_offset, data_struct->data.data(), data_struct->offset, FsWriteOption_None))) {
+        if (R_FAILED(data_struct->f.Write(data_struct->file_offset, data_struct->data.data(), data_struct->offset, FsWriteOption_None))) {
             return 0;
         }
 
@@ -518,7 +524,7 @@ auto WriteFileCallback(void *contents, size_t size, size_t num_files, void *user
 
     // we have a huge chunk! write it directly to file
     if (data_struct->data.size() < realsize) {
-        if (R_FAILED(fsFileWrite(&data_struct->f, data_struct->file_offset, contents, realsize, FsWriteOption_None))) {
+        if (R_FAILED(data_struct->f.Write(data_struct->file_offset, contents, realsize, FsWriteOption_None))) {
             return 0;
         }
 
@@ -529,7 +535,7 @@ auto WriteFileCallback(void *contents, size_t size, size_t num_files, void *user
         data_struct->offset += realsize;
     }
 
-    svcSleepThread(YieldType_WithoutCoreMigration);
+    Yield();
     return realsize;
 }
 
@@ -669,6 +675,9 @@ void SetCommonCurlOptions(CURL* curl, const Api& e) {
 
 }
 auto DownloadInternal(CURL* curl, const Api& e) -> ApiResult {
+    App::SetAutoSleepDisabled(true);
+    ON_SCOPE_EXIT(App::SetAutoSleepDisabled(false));
+
     // check if stop has been requested before starting download
     if (e.GetToken().stop_requested()) {
         return {};
@@ -758,10 +767,10 @@ auto DownloadInternal(CURL* curl, const Api& e) -> ApiResult {
     if (has_file) {
         ON_SCOPE_EXIT( fs.DeleteFile(tmp_buf) );
         if (res == CURLE_OK && chunk.offset) {
-            fsFileWrite(&chunk.f, chunk.file_offset, chunk.data.data(), chunk.offset, FsWriteOption_None);
+            chunk.f.Write(chunk.file_offset, chunk.data.data(), chunk.offset, FsWriteOption_None);
         }
 
-        fsFileClose(&chunk.f);
+        chunk.f.Close();
 
         if (res == CURLE_OK) {
             if (http_code == 304) {
@@ -831,7 +840,7 @@ auto UploadInternal(CURL* curl, const Api& e) -> ApiResult {
             return {};
         }
 
-        fsFileGetSize(&chunk.f, &chunk.size);
+        chunk.f.GetSize(&chunk.size);
         log_write("got chunk size: %zd\n", chunk.size);
     } else {
         if (info.m_callback) {
@@ -925,7 +934,7 @@ auto UploadInternal(CURL* curl, const Api& e) -> ApiResult {
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
     if (has_file) {
-        fsFileClose(&chunk.f);
+        chunk.f.Close();
     }
 
     log_write("Uploaded %s code: %ld %s\n", url.c_str(), http_code, curl_easy_strerror(res));

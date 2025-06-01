@@ -13,6 +13,8 @@
 #include "yyjson_helper.hpp"
 #include "swkbd.hpp"
 #include "i18n.hpp"
+#include "hasher.hpp"
+#include "threaded_file_transfer.hpp"
 #include "nro.hpp"
 
 #include <minIni.h>
@@ -21,7 +23,7 @@
 #include <yyjson.h>
 #include <stb_image.h>
 #include <minizip/unzip.h>
-#include <mbedtls/md5.h>
+#include <algorithm>
 #include <ranges>
 #include <utility>
 
@@ -34,6 +36,22 @@ constexpr auto URL_BASE = "https://switch.cdn.fortheusers.org";
 constexpr auto URL_JSON = "https://switch.cdn.fortheusers.org/repo.json";
 constexpr auto URL_POST_FEEDBACK = "http://switchbru.com/appstore/feedback";
 constexpr auto URL_GET_FEEDACK = "http://switchbru.com/appstore/feedback";
+
+constexpr const u8 UPDATE_IMAGE_DATA[]{
+    #embed <icons/UPDATE.png>
+};
+
+constexpr const u8 GET_IMAGE_DATA[]{
+    #embed <icons/GET.png>
+};
+
+constexpr const u8 LOCAL_IMAGE_DATA[]{
+    #embed <icons/LOCAL.png>
+};
+
+constexpr const u8 INSTALLED_IMAGE_DATA[]{
+    #embed <icons/INSTALLED.png>
+};
 
 constexpr const char* FILTER_STR[] = {
     "All",
@@ -56,6 +74,62 @@ constexpr const char* SORT_STR[] = {
 constexpr const char* ORDER_STR[] = {
     "Desc",
     "Asc",
+};
+
+struct MzMem {
+    const void* buf;
+    size_t size;
+    size_t offset;
+};
+
+ZPOS64_T minizip_tell_file_func(voidpf opaque, voidpf stream) {
+    auto mem = static_cast<const MzMem*>(opaque);
+    return mem->offset;
+}
+
+long minizip_seek_file_func(voidpf opaque, voidpf stream, ZPOS64_T offset, int origin) {
+    auto mem = static_cast<MzMem*>(opaque);
+    size_t new_offset = 0;
+
+    switch (origin) {
+        case ZLIB_FILEFUNC_SEEK_SET: new_offset = offset; break;
+        case ZLIB_FILEFUNC_SEEK_CUR: new_offset = mem->offset + offset; break;
+        case ZLIB_FILEFUNC_SEEK_END: new_offset = (mem->size - 1) + offset; break;
+        default: return -1;
+    }
+
+    if (new_offset > mem->size) {
+        return -1;
+    }
+
+    mem->offset = new_offset;
+    return 0;
+}
+
+voidpf minizip_open_file_func(voidpf opaque, const void* filename, int mode) {
+    return opaque;
+}
+
+uLong minizip_read_file_func(voidpf opaque, voidpf stream, void* buf, uLong size) {
+    auto mem = static_cast<MzMem*>(opaque);
+
+    size = std::min(size, mem->size - mem->offset);
+    std::memcpy(buf, (const u8*)mem->buf + mem->offset, size);
+    mem->offset += size;
+
+    return size;
+}
+
+int minizip_close_file_func(voidpf opaque, voidpf stream) {
+    return 0;
+}
+
+constexpr zlib_filefunc64_def zlib_filefunc = {
+    .zopen64_file = minizip_open_file_func,
+    .zread_file = minizip_read_file_func,
+    .ztell64_file = minizip_tell_file_func,
+    .zseek64_file = minizip_seek_file_func,
+    .zclose_file = minizip_close_file_func,
 };
 
 auto BuildIconUrl(const Entry& e) -> std::string {
@@ -172,7 +246,7 @@ auto LoadAndParseManifest(const Entry& e) -> ManifestEntries {
     return ParseManifest(std::span{(const char*)data.data(), data.size()});
 }
 
-auto EntryLoadImageFile(fs::Fs& fs, const fs::FsPath& path, LazyImage& image) -> bool {
+auto EntryLoadImageData(std::span<const u8> image_buf, LazyImage& image) -> bool {
     // already have the image
     if (image.image) {
         // log_write("warning, tried to load image: %s when already loaded\n", path);
@@ -180,17 +254,29 @@ auto EntryLoadImageFile(fs::Fs& fs, const fs::FsPath& path, LazyImage& image) ->
     }
     auto vg = App::GetVg();
 
+    int channels_in_file;
+    auto buf = stbi_load_from_memory(image_buf.data(), image_buf.size(), &image.w, &image.h, &channels_in_file, 4);
+    if (buf) {
+        ON_SCOPE_EXIT(stbi_image_free(buf));
+        std::memcpy(image.first_pixel, buf, sizeof(image.first_pixel));
+        image.image = nvgCreateImageRGBA(vg, image.w, image.h, 0, buf);
+    }
+
+    return image.image;
+}
+
+auto EntryLoadImageFile(fs::Fs& fs, const fs::FsPath& path, LazyImage& image) -> bool {
+    // already have the image
+    if (image.image) {
+        // log_write("warning, tried to load image: %s when already loaded\n", path);
+        return true;
+    }
+
     std::vector<u8> image_buf;
     if (R_FAILED(fs.read_entire_file(path, image_buf))) {
         log_write("failed to load image from file: %s\n", path.s);
     } else {
-        int channels_in_file;
-        auto buf = stbi_load_from_memory(image_buf.data(), image_buf.size(), &image.w, &image.h, &channels_in_file, 4);
-        if (buf) {
-            ON_SCOPE_EXIT(stbi_image_free(buf));
-            std::memcpy(image.first_pixel, buf, sizeof(image.first_pixel));
-            image.image = nvgCreateImageRGBA(vg, image.w, image.h, 0, buf);
-        }
+        EntryLoadImageData(image_buf, image);
     }
 
     if (!image.image) {
@@ -286,14 +372,12 @@ void ReadFromInfoJson(Entry& e) {
 
 // this ignores ShouldExit() as leaving somthing in a half
 // deleted state is a bad idea :)
-auto UninstallApp(ProgressBox* pbox, const Entry& entry) -> bool {
+auto UninstallApp(ProgressBox* pbox, const Entry& entry) -> Result {
     const auto manifest = LoadAndParseManifest(entry);
     fs::FsNativeSd fs;
 
     if (manifest.empty()) {
-        if (entry.binary.empty()) {
-            return false;
-        }
+        R_UNLESS(!entry.binary.empty(), 0x1);
         fs.DeleteFile(entry.binary);
     } else {
         for (auto& e : manifest) {
@@ -313,13 +397,14 @@ auto UninstallApp(ProgressBox* pbox, const Entry& entry) -> bool {
 
     // remove directory, this will also delete manifest and info
     const auto dir = BuildPackageCachePath(entry);
-    pbox->NewTransfer("Removing "_i18n + dir);
+    pbox->NewTransfer("Removing "_i18n + dir.toString());
     if (R_FAILED(fs.DeleteDirectoryRecursively(dir))) {
         log_write("failed to delete folder: %s\n", dir.s);
     } else {
         log_write("deleted: %s\n", dir.s);
     }
-    return true;
+
+    R_SUCCEED();
 }
 
 // this is called by ProgressBox on a seperate thread
@@ -328,12 +413,17 @@ auto UninstallApp(ProgressBox* pbox, const Entry& entry) -> bool {
 // 2. md5 check the zip
 // 3. parse manifest and unzip everything to placeholder
 // 4. move everything from placeholder to normal location
-auto InstallApp(ProgressBox* pbox, const Entry& entry) -> bool {
+auto InstallApp(ProgressBox* pbox, const Entry& entry) -> Result {
     static const fs::FsPath zip_out{"/config/sphaira/cache/appstore/temp.zip"};
-    constexpr auto chunk_size = 1024 * 512; // 512KiB
+    std::vector<u8> buf(1024 * 512); // 512KiB
 
     fs::FsNativeSd fs;
-    R_TRY_RESULT(fs.GetFsOpenResult(), false);
+    R_TRY(fs.GetFsOpenResult());
+
+    // check if we can download the entire zip to mem for faster download / extract times.
+    // current limit is 300MiB, or disabled for applet mode.
+    const auto file_download = App::IsApplet() || entry.filesize >= 1024 * 1024 * 300;
+    curl::ApiResult api_result{};
 
     // 1. download the zip
     if (!pbox->ShouldExit()) {
@@ -341,14 +431,19 @@ auto InstallApp(ProgressBox* pbox, const Entry& entry) -> bool {
         log_write("starting download\n");
 
         const auto url = BuildZipUrl(entry);
-        if (!curl::Api().ToFile(
+        curl::Api api{
             curl::Url{url},
-            curl::Path{zip_out},
             curl::OnProgress{pbox->OnDownloadProgressCallback()}
-        ).success) {
-            log_write("error with download\n");
-            return false;
+        };
+
+        if (file_download) {
+            api.SetOption(curl::Path{zip_out});
+            api_result = curl::ToFile(api);
+        } else {
+            api_result = curl::ToMemory(api);
         }
+
+        R_UNLESS(api_result.success, 0x1);
     }
 
     ON_SCOPE_EXIT(fs.DeleteFile(zip_out));
@@ -358,77 +453,40 @@ auto InstallApp(ProgressBox* pbox, const Entry& entry) -> bool {
         pbox->NewTransfer("Checking MD5"_i18n);
         log_write("starting md5 check\n");
 
-        FsFile f;
-        if (R_FAILED(fs.OpenFile(zip_out, FsOpenMode_Read, &f))) {
-            return false;
-        }
-        ON_SCOPE_EXIT(fsFileClose(&f));
-
-        s64 size;
-        if (R_FAILED(fsFileGetSize(&f, &size))) {
-            return false;
+        std::string hash_out;
+        if (file_download) {
+            R_TRY(hash::Hash(pbox, hash::Type::Md5, &fs, zip_out, hash_out));
+        } else {
+            R_TRY(hash::Hash(pbox, hash::Type::Md5, api_result.data, hash_out));
         }
 
-        mbedtls_md5_context ctx;
-        mbedtls_md5_init(&ctx);
-        ON_SCOPE_EXIT(mbedtls_md5_free(&ctx));
-
-        if (mbedtls_md5_starts_ret(&ctx)) {
-            log_write("failed to start ret\n");
+        if (strncasecmp(hash_out.data(), entry.md5.data(), entry.md5.length())) {
+            log_write("bad md5: %.*s vs %.*s\n", 32, hash_out.data(), 32, entry.md5.c_str());
+            R_THROW(0x1);
         }
+    }
 
-        std::vector<u8> chunk(chunk_size);
-        s64 offset{};
-        while (offset < size) {
-            if (pbox->ShouldExit()) {
-                return false;
-            }
+    struct MzMem mem{};
+    mem.buf = api_result.data.data();
+    mem.size = api_result.data.size();
+    auto file_func = zlib_filefunc;
+    file_func.opaque = &mem;
 
-            u64 bytes_read;
-            if (R_FAILED(fsFileRead(&f, offset, chunk.data(), chunk.size(), 0, &bytes_read))) {
-                log_write("failed to read file offset: %zd size: %zd\n", offset, size);
-                return false;
-            }
-
-            if (mbedtls_md5_update_ret(&ctx, chunk.data(), bytes_read)) {
-                log_write("failed to update ret\n");
-                return false;
-            }
-
-            offset += bytes_read;
-            pbox->UpdateTransfer(offset, size);
-        }
-
-        u8 md5_out[16];
-        if (mbedtls_md5_finish_ret(&ctx, (u8*)md5_out)) {
-            return false;
-        }
-
-        // convert md5 to hex string
-        char md5_str[sizeof(md5_out) * 2 + 1];
-        for (u32 i = 0; i < sizeof(md5_out); i++) {
-            std::sprintf(md5_str + i * 2, "%02x", md5_out[i]);
-        }
-
-        if (strncasecmp(md5_str, entry.md5.data(), entry.md5.length())) {
-            log_write("bad md5: %.*s vs %.*s\n", 32, md5_str, 32, entry.md5.c_str());
-            return false;
-        }
+    zlib_filefunc64_def* file_func_ptr{};
+    if (!file_download) {
+        file_func_ptr = &file_func;
     }
 
     // 3. extract the zip
     if (!pbox->ShouldExit()) {
-        auto zfile = unzOpen64(zip_out);
-        if (!zfile) {
-            log_write("failed to open zip: %s\n", zip_out.s);
-            return false;
-        }
+        auto zfile = unzOpen2_64(zip_out, file_func_ptr);
+        R_UNLESS(zfile, 0x1);
         ON_SCOPE_EXIT(unzClose(zfile));
 
         // get manifest
         if (UNZ_END_OF_LIST_OF_FILE == unzLocateFile(zfile, "manifest.install", 0)) {
             log_write("failed to find manifest.install\n");
-            return false;
+            R_THROW(0x1);
         }
 
         ManifestEntries new_manifest;
@@ -436,138 +494,96 @@ auto InstallApp(ProgressBox* pbox, const Entry& entry) -> bool {
         {
             if (UNZ_OK != unzOpenCurrentFile(zfile)) {
                 log_write("failed to open current file\n");
-                return false;
+                R_THROW(0x1);
             }
             ON_SCOPE_EXIT(unzCloseCurrentFile(zfile));
 
             unz_file_info64 info;
             if (UNZ_OK != unzGetCurrentFileInfo64(zfile, &info, 0, 0, 0, 0, 0, 0)) {
                 log_write("failed to get current info\n");
-                return false;
+                R_THROW(0x1);
             }
 
             std::vector<char> manifest_data(info.uncompressed_size);
             if ((int)info.uncompressed_size != unzReadCurrentFile(zfile, manifest_data.data(), manifest_data.size())) {
                 log_write("failed to read manifest file\n");
-                return false;
+                R_THROW(0x1);
             }
 
             new_manifest = ParseManifest(manifest_data);
             if (new_manifest.empty()) {
                 log_write("manifest is empty!\n");
-                return false;
+                R_THROW(0x1);
             }
         }
 
-        const auto unzip_to = [pbox, &fs, zfile](const fs::FsPath& inzip, fs::FsPath output) -> bool {
+        const auto unzip_to = [&](const fs::FsPath& inzip, const fs::FsPath& output) -> Result {
             pbox->NewTransfer(inzip);
 
             if (UNZ_END_OF_LIST_OF_FILE == unzLocateFile(zfile, inzip, 0)) {
                 log_write("failed to find %s\n", inzip.s);
-                return false;
+                R_THROW(0x1);
             }
 
             if (UNZ_OK != unzOpenCurrentFile(zfile)) {
                 log_write("failed to open current file\n");
-                return false;
+                R_THROW(0x1);
             }
             ON_SCOPE_EXIT(unzCloseCurrentFile(zfile));
 
             unz_file_info64 info;
             if (UNZ_OK != unzGetCurrentFileInfo64(zfile, &info, 0, 0, 0, 0, 0, 0)) {
                 log_write("failed to get current info\n");
-                return false;
+                R_THROW(0x1);
             }
 
-            if (output[0] != '/') {
-                output = fs::AppendPath("/", output);
+            auto path = output;
+            if (path[0] != '/') {
+                path = fs::AppendPath("/", path);
             }
 
-            // create directories
-            fs.CreateDirectoryRecursivelyWithPath(output);
-
-            Result rc;
-            if (R_FAILED(rc = fs.CreateFile(output, info.uncompressed_size, 0)) && rc != FsError_PathAlreadyExists) {
-                log_write("failed to create file: %s 0x%04X\n", output.s, rc);
-                return false;
-            }
-
-            FsFile f;
-            if (R_FAILED(rc = fs.OpenFile(output, FsOpenMode_Write, &f))) {
-                log_write("failed to open file: %s 0x%04X\n", output.s, rc);
-                return false;
-            }
-            ON_SCOPE_EXIT(fsFileClose(&f));
-
-            if (R_FAILED(rc = fsFileSetSize(&f, info.uncompressed_size))) {
-                log_write("failed to set file size: %s 0x%04X\n", output.s, rc);
-                return false;
-            }
-
-            std::vector<char> buf(chunk_size);
-            u64 offset{};
-            while (offset < info.uncompressed_size) {
-                if (pbox->ShouldExit()) {
-                    return false;
-                }
-
-                const auto bytes_read = unzReadCurrentFile(zfile, buf.data(), buf.size());
-                if (bytes_read <= 0) {
-                    log_write("failed to read zip file: %s\n", inzip.s);
-                    return false;
-                }
-
-                if (R_FAILED(rc = fsFileWrite(&f, offset, buf.data(), bytes_read, FsWriteOption_None))) {
-                    log_write("failed to write file: %s 0x%04X\n", output.s, rc);
-                    return false;
-                }
-
-                pbox->UpdateTransfer(offset, info.uncompressed_size);
-                offset += bytes_read;
-            }
-
-            return true;
+            return thread::TransferUnzip(pbox, zfile, &fs, path, info.uncompressed_size, info.crc);
         };
 
-        // unzip manifest and info
-        if (!unzip_to("info.json", BuildInfoCachePath(entry))) {
-            return false;
-        }
-        if (!unzip_to("manifest.install", BuildManifestCachePath(entry))) {
-            return false;
-        }
+        // unzip manifest, info and all entries.
+        TimeStamp ts;
+        #if 1
+        R_TRY(unzip_to("info.json", BuildInfoCachePath(entry)));
+        R_TRY(unzip_to("manifest.install", BuildManifestCachePath(entry)));
+        #endif
 
-        for (auto& new_entry : new_manifest) {
-            if (pbox->ShouldExit()) {
+        R_TRY(thread::TransferUnzipAll(pbox, zfile, &fs, "/", [&](const fs::FsPath& name, fs::FsPath& path) -> bool {
+            const auto it = std::ranges::find_if(new_manifest, [&name](auto& e){
+                return !strcasecmp(name, e.path);
+            });
+
+            if (it == new_manifest.end()) [[unlikely]] {
                 return false;
             }
 
-            switch (new_entry.command) {
+            pbox->NewTransfer(it->path);
+
+            switch (it->command) {
                 case 'E': // both are the same?
                 case 'U':
-                    break;
+                    return true;
 
-                case 'G': { // checks if file exists, if not, extract
-                    if (fs.FileExists(fs::AppendPath("/", new_entry.path))) {
-                        continue;
-                    }
-                }   break;
+                case 'G': // checks if file exists, if not, extract
+                    return !fs.FileExists(fs::AppendPath("/", it->path));
 
                 default:
-                    log_write("bad command: %c\n", new_entry.command);
-                    continue;
+                    log_write("bad command: %c\n", it->command);
+                    return false;
             }
+        }));
 
-            if (!unzip_to(new_entry.path, new_entry.path)) {
-                return false;
-            }
-        }
+        log_write("\n\t[APPSTORE] finished extract new, time taken: %.2fs %zums\n\n", ts.GetSecondsD(), ts.GetMs());
 
         // finally finally, remove files no longer in the manifest
         for (auto& old_entry : old_manifest) {
             bool found = false;
             for (auto& new_entry : new_manifest) {
-                if (!std::strcmp(old_entry.path, new_entry.path)) {
+                if (!strcasecmp(old_entry.path, new_entry.path)) {
                     found = true;
                     break;
                 }
@@ -586,7 +602,7 @@ auto InstallApp(ProgressBox* pbox, const Entry& entry) -> bool {
     }
 
     log_write("finished install :)\n");
-    return true;
+    R_SUCCEED();
 }
 
 // case-insensitive version of str.find()
@@ -600,7 +616,7 @@ auto FindCaseInsensitive(std::string_view base, std::string_view term) -> bool {
 } // namespace
 
 EntryMenu::EntryMenu(Entry& entry, const LazyImage& default_icon, Menu& menu)
-: MenuBase{entry.title}
+: MenuBase{entry.title, MenuFlag_None}
 , m_entry{entry}
 , m_default_icon{default_icon}
 , m_menu{menu} {
@@ -775,27 +791,31 @@ void EntryMenu::UpdateOptions() {
     const auto install = [this](){
         App::Push(std::make_shared<ProgressBox>(m_entry.image.image, "Downloading "_i18n, m_entry.title, [this](auto pbox){
             return InstallApp(pbox, m_entry);
-        }, [this](bool success){
-            if (success) {
+        }, [this](Result rc){
+            App::PushErrorBox(rc, "Failed to, TODO: add message here"_i18n);
+
+            if (R_SUCCEEDED(rc)) {
                 App::Notify("Downloaded "_i18n + m_entry.title);
                 m_entry.status = EntryStatus::Installed;
                 m_menu.SetDirty();
                 UpdateOptions();
             }
-        }, 2));
+        }));
     };
 
     const auto uninstall = [this](){
         App::Push(std::make_shared<ProgressBox>(m_entry.image.image, "Uninstalling "_i18n, m_entry.title, [this](auto pbox){
             return UninstallApp(pbox, m_entry);
-        }, [this](bool success){
-            if (success) {
+        }, [this](Result rc){
+            App::PushErrorBox(rc, "Failed to, TODO: add message here"_i18n);
+
+            if (R_SUCCEEDED(rc)) {
                 App::Notify("Removed "_i18n + m_entry.title);
                 m_entry.status = EntryStatus::Get;
                 m_menu.SetDirty();
                 UpdateOptions();
             }
-        }, 2));
+        }));
     };
 
     const Option install_option{"Install"_i18n, install};
@@ -845,7 +865,7 @@ void EntryMenu::SetIndex(s64 index) {
     }
 }
 
-Menu::Menu() : grid::Menu{"AppStore"_i18n} {
+Menu::Menu(u32 flags) : grid::Menu{"AppStore"_i18n, flags} {
     fs::FsNativeSd fs;
     fs.CreateDirectoryRecursively("/config/sphaira/cache/appstore/icons");
     fs.CreateDirectoryRecursively("/config/sphaira/cache/appstore/banners");
@@ -1091,14 +1111,11 @@ void Menu::OnFocusGained() {
     // log_write("saying we got focus base: size: %zu count: %zu\n", repo_json.size(), m_entries.size());
 
     if (!m_default_image.image) {
-        if (R_SUCCEEDED(romfsInit())) {
-            ON_SCOPE_EXIT(romfsExit());
-            EntryLoadImageFile("romfs:/default.png", m_default_image);
-            EntryLoadImageFile("romfs:/UPDATE.png", m_update);
-            EntryLoadImageFile("romfs:/GET.png", m_get);
-            EntryLoadImageFile("romfs:/LOCAL.png", m_local);
-            EntryLoadImageFile("romfs:/INSTALLED.png", m_installed);
-        }
+        EntryLoadImageData(App::GetDefaultImageData(), m_default_image);
+        EntryLoadImageData(UPDATE_IMAGE_DATA, m_update);
+        EntryLoadImageData(GET_IMAGE_DATA, m_get);
+        EntryLoadImageData(LOCAL_IMAGE_DATA, m_local);
+        EntryLoadImageData(INSTALLED_IMAGE_DATA, m_installed);
     }
 
     if (m_entries.empty()) {
@@ -1143,6 +1160,9 @@ void Menu::SetIndex(s64 index) {
 }
 
 void Menu::ScanHomebrew() {
+    appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
+    ON_SCOPE_EXIT(appletSetCpuBoostMode(ApmCpuBoostMode_Normal));
+
     from_json(REPO_PATH, m_entries);
 
     fs::FsNativeSd fs;

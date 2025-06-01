@@ -19,17 +19,21 @@
 #include "defines.hpp"
 #include "i18n.hpp"
 #include "ftpsrv_helper.hpp"
+#include "web.hpp"
+#include "swkbd.hpp"
 
 #include <nanovg_dk.h>
 #include <minIni.h>
 #include <pulsar.h>
 #include <haze.h>
 #include <algorithm>
+#include <ranges>
 #include <cassert>
 #include <cstring>
 #include <ctime>
 #include <span>
 #include <dirent.h>
+#include <usbhsfs.h>
 
 extern "C" {
     u32 __nx_applet_exit_mode = 0;
@@ -42,6 +46,10 @@ constexpr fs::FsPath DEFAULT_MUSIC_PATH = "/config/sphaira/themes/default_music.
 constexpr const char* DEFAULT_MUSIC_URL = "https://files.catbox.moe/1ovji1.bfstm";
 // constexpr const char* DEFAULT_MUSIC_URL = "https://raw.githubusercontent.com/ITotalJustice/sphaira/refs/heads/master/assets/default_music.bfstm";
 
+constexpr const u8 DEFAULT_IMAGE_DATA[]{
+    #embed <icons/default.png>
+};
+
 void download_default_music() {
     App::Push(std::make_shared<ui::ProgressBox>(0, "Downloading "_i18n, "default_music.bfstm", [](auto pbox){
         const auto result = curl::Api().ToFile(
@@ -50,15 +58,17 @@ void download_default_music() {
             curl::OnProgress{pbox->OnDownloadProgressCallback()}
         );
 
-        return result.success;
-    }, [](bool success){
-        if (success) {
+        if (!result.success) {
+            R_THROW(0x1);
+        }
+
+        R_SUCCEED();
+    }, [](Result rc){
+        App::PushErrorBox(rc, "Failed to, TODO: add message here"_i18n);
+
+        if (R_SUCCEEDED(rc)) {
             App::Notify("Downloaded "_i18n + "default_music.bfstm");
             App::SetTheme(App::GetThemeIndex());
-        } else {
-            App::Push(std::make_shared<ui::ErrorBox>(
-                "Failed to download default_music.bfstm, please try again"_i18n
-            ));
         }
     }));
 }
@@ -88,6 +98,7 @@ constexpr ThemeIdPair THEME_ENTRIES[] = {
     { "selected_background", ThemeEntryID_SELECTED_BACKGROUND, ElementType::Colour },
     { "error", ThemeEntryID_ERROR, ElementType::Colour },
     { "popup", ThemeEntryID_POPUP, ElementType::Colour },
+    { "focus", ThemeEntryID_FOCUS, ElementType::Colour },
     { "line", ThemeEntryID_LINE, ElementType::Colour },
     { "line_separator", ThemeEntryID_LINE_SEPARATOR, ElementType::Colour },
     { "sidebar", ThemeEntryID_SIDEBAR, ElementType::Colour },
@@ -439,15 +450,9 @@ void App::Loop() {
                     timeGetCurrentTime(TimeType_LocalSystemClock, &timestamp);
                     const auto nro_path = nro_normalise_path(arg.path);
 
-                    ini_puts("paths", "last_launch_full", arg.argv.c_str(), App::CONFIG_PATH);
-                    ini_puts("paths", "last_launch_path", nro_path.c_str(), App::CONFIG_PATH);
-
                     // update timestamp
                     ini_putl(nro_path.c_str(), "timestamp", timestamp, App::PLAYLOG_PATH);
-                    // update launch_count
-                    const long old_launch_count = ini_getl(nro_path.c_str(), "launch_count", 0, App::PLAYLOG_PATH);
-                    ini_putl(nro_path.c_str(), "launch_count", old_launch_count + 1, App::PLAYLOG_PATH);
-                    log_write("updating timestamp and launch count for: %s %lu %ld\n", nro_path.c_str(), timestamp, old_launch_count + 1);
+                    log_write("updating timestamp for: %s %lu\n", nro_path.c_str(), timestamp);
 
                     // force disable pop-back to main menu.
                     __nx_applet_exit_mode = 0;
@@ -516,11 +521,11 @@ auto App::Push(std::shared_ptr<ui::Widget> widget) -> void {
 }
 
 auto App::PopToMenu() -> void {
-    for (auto it = g_app->m_widgets.rbegin(); it != g_app->m_widgets.rend(); it++) {
-        const auto& p = *it;
+    for (auto& p : std::ranges::views::reverse(g_app->m_widgets)) {
         if (p->IsMenu()) {
             break;
         }
+
         p->SetPop();
     }
 }
@@ -542,7 +547,7 @@ void App::NotifyClear(ui::NotifEntry::Side side) {
 }
 
 void App::NotifyFlashLed() {
-    static const HidsysNotificationLedPattern pattern = {
+    static constexpr HidsysNotificationLedPattern pattern = {
         .baseMiniCycleDuration = 0x1,             // 12.5ms.
         .totalMiniCycles = 0x1,                   // 1 mini cycle(s).
         .totalFullCycles = 0x1,                   // 1 full run(s).
@@ -554,13 +559,28 @@ void App::NotifyFlashLed() {
         }}
     };
 
+    Result rc;
     s32 total;
-    HidsysUniquePadId unique_pad_ids[16] = {0};
-    if (R_SUCCEEDED(hidsysGetUniquePadIds(unique_pad_ids, 16, &total))) {
-        for (int i = 0; i < total; i++) {
-            hidsysSetNotificationLedPattern(&pattern, unique_pad_ids[i]);
+    HidsysUniquePadId unique_pad_id;
+
+    rc = hidsysGetUniquePadsFromNpad(HidNpadIdType_Handheld, &unique_pad_id, 1, &total);
+    if (R_SUCCEEDED(rc) && total) {
+        rc = hidsysSetNotificationLedPattern(&pattern, unique_pad_id);
+    }
+
+    if (R_FAILED(rc) || !total) {
+        rc = hidsysGetUniquePadsFromNpad(HidNpadIdType_No1, &unique_pad_id, 1, &total);
+        if (R_SUCCEEDED(rc) && total) {
+            hidsysSetNotificationLedPattern(&pattern, unique_pad_id);
         }
     }
+}
+
+Result App::PushErrorBox(Result rc, const std::string& message) {
+    if (R_FAILED(rc)) {
+        App::Push(std::make_shared<ui::ErrorBox>(rc, message));
+    }
+    return rc;
 }
 
 auto App::GetThemeMetaList() -> std::span<ThemeMeta> {
@@ -580,6 +600,10 @@ auto App::GetDefaultImage() -> int {
     return g_app->m_default_image;
 }
 
+auto App::GetDefaultImageData() -> std::span<const u8> {
+    return DEFAULT_IMAGE_DATA;
+}
+
 auto App::GetExePath() -> fs::FsPath {
     return g_app->m_app_path;
 }
@@ -592,6 +616,14 @@ auto App::GetNxlinkEnable() -> bool {
     return g_app->m_nxlink_enabled.Get();
 }
 
+auto App::GetHddEnable() -> bool {
+    return g_app->m_hdd_enabled.Get();
+}
+
+auto App::GetWriteProtect() -> bool {
+    return g_app->m_hdd_write_protect.Get();
+}
+
 auto App::GetLogEnable() -> bool {
     return g_app->m_log_enabled.Get();
 }
@@ -601,7 +633,7 @@ auto App::GetReplaceHbmenuEnable() -> bool {
 }
 
 auto App::GetInstallEnable() -> bool {
-    if (IsEmunand()) {
+    if (IsEmummc()) {
         return GetInstallEmummcEnable();
     } else {
         return GetInstallSysmmcEnable();
@@ -655,6 +687,32 @@ void App::SetNxlinkEnable(bool enable) {
             nxlinkInitialize(nxlink_callback);
         } else {
             nxlinkExit();
+        }
+    }
+}
+
+void App::SetHddEnable(bool enable) {
+    if (App::GetHddEnable() != enable) {
+        g_app->m_hdd_enabled.Set(enable);
+        if (enable) {
+            if (App::GetWriteProtect()) {
+                usbHsFsSetFileSystemMountFlags(UsbHsFsMountFlags_ReadOnly);
+            }
+            usbHsFsInitialize(1);
+        } else {
+            usbHsFsExit();
+        }
+    }
+}
+
+void App::SetWriteProtect(bool enable) {
+    if (App::GetWriteProtect() != enable) {
+        g_app->m_hdd_write_protect.Set(enable);
+
+        if (enable) {
+            usbHsFsSetFileSystemMountFlags(UsbHsFsMountFlags_ReadOnly);
+        } else {
+            usbHsFsSetFileSystemMountFlags(0);
         }
     }
 }
@@ -737,9 +795,10 @@ void App::SetReplaceHbmenuEnable(bool enable) {
                     if (R_FAILED(rc = fs.copy_entire_file("/hbmenu.nro", "/config/sphaira/hbmenu.nro")))  {
                         // try and restore sphaira in a last ditch effort.
                         if (R_FAILED(rc = fs.copy_entire_file("/hbmenu.nro", sphaira_path))) {
-                            App::Push(std::make_shared<ui::ErrorBox>(rc,
+                            App::PushErrorBox(rc, "Failed to, TODO: add message here"_i18n);
+                            App::PushErrorBox(rc,
                                 "Failed to restore hbmenu, please re-download hbmenu"_i18n
-                            ));
+                            );
                         } else {
                             App::Push(std::make_shared<ui::OptionBox>(
                                 "Failed to restore hbmenu, using sphaira instead"_i18n,
@@ -837,63 +896,50 @@ void App::SetTextScrollSpeed(long index) {
 }
 
 auto App::Install(OwoConfig& config) -> Result {
-    R_TRY(romfsInit());
-    ON_SCOPE_EXIT(romfsExit());
+    App::Push(std::make_shared<ui::ProgressBox>(0, "Installing Forwarder"_i18n, config.name, [config](auto pbox) mutable -> Result {
+        return Install(pbox, config);
+    }, [](Result rc){
+        App::PushErrorBox(rc, "Failed to install forwarder"_i18n);
 
-    std::vector<u8> main_data, npdm_data, logo_data, gif_data;
-    R_TRY(fs::read_entire_file("romfs:/exefs/main", main_data));
-    R_TRY(fs::read_entire_file("romfs:/exefs/main.npdm", npdm_data));
+        if (R_SUCCEEDED(rc)) {
+            App::PlaySoundEffect(SoundEffect_Install);
+            App::Notify("Installed!"_i18n);
+        }
+    }));
 
-    config.nro_path = nro_add_arg_file(config.nro_path);
-    config.main = main_data;
-    config.npdm = npdm_data;
-    config.logo = logo_data;
-    config.gif = gif_data;
-    if (!config.icon.empty()) {
-        config.icon = GetNroIcon(config.icon);
-    }
-
-    const auto rc = install_forwarder(config, App::GetInstallSdEnable() ? NcmStorageId_SdCard : NcmStorageId_BuiltInUser);
-
-    if (R_FAILED(rc)) {
-        App::PlaySoundEffect(SoundEffect_Error);
-        App::Push(std::make_shared<ui::ErrorBox>(rc, "Failed to install forwarder"_i18n));
-    } else {
-        App::PlaySoundEffect(SoundEffect_Install);
-        App::Notify("Installed!"_i18n);
-    }
-
-    return rc;
+    R_SUCCEED();
 }
 
 auto App::Install(ui::ProgressBox* pbox, OwoConfig& config) -> Result {
-    R_TRY(romfsInit());
-    ON_SCOPE_EXIT(romfsExit());
-
-    std::vector<u8> main_data, npdm_data, logo_data, gif_data;
-    R_TRY(fs::read_entire_file("romfs:/exefs/main", main_data));
-    R_TRY(fs::read_entire_file("romfs:/exefs/main.npdm", npdm_data));
-
     config.nro_path = nro_add_arg_file(config.nro_path);
-    config.main = main_data;
-    config.npdm = npdm_data;
-    config.logo = logo_data;
-    config.gif = gif_data;
     if (!config.icon.empty()) {
         config.icon = GetNroIcon(config.icon);
     }
 
-    const auto rc = install_forwarder(pbox, config, GetInstallSdEnable() ? NcmStorageId_SdCard : NcmStorageId_BuiltInUser);
-
-    if (R_FAILED(rc)) {
-        App::PlaySoundEffect(SoundEffect_Error);
-        App::Push(std::make_shared<ui::ErrorBox>(rc, "Failed to install forwarder"_i18n));
-    } else {
-        App::PlaySoundEffect(SoundEffect_Install);
-        App::Notify("Installed!"_i18n);
+    if (config.logo.empty()) {
+        fs::FsNativeSd().read_entire_file("/config/sphaira/logo/NintendoLogo.png", config.logo);
     }
 
-    return rc;
+    if (config.gif.empty()) {
+        fs::FsNativeSd().read_entire_file("/config/sphaira/logo/StartupMovie.gif", config.gif);
+    }
+
+    return install_forwarder(pbox, config, GetInstallSdEnable() ? NcmStorageId_SdCard : NcmStorageId_BuiltInUser);
+}
+
+auto App::IsEmummc() -> bool {
+    const auto& paths = g_app->m_emummc_paths;
+    return (paths.file_based_path[0] != '\0') || (paths.nintendo[0] != '\0');
+}
+
+auto App::IsParitionBaseEmummc() -> bool {
+    const auto& paths = g_app->m_emummc_paths;
+    return (paths.file_based_path[0] == '\0') && (paths.nintendo[0] != '\0');
+}
+
+auto App::IsFileBaseEmummc() -> bool {
+    const auto& paths = g_app->m_emummc_paths;
+    return (paths.file_based_path[0] != '\0') && (paths.nintendo[0] != '\0');
 }
 
 void App::Exit() {
@@ -1237,6 +1283,9 @@ void App::ScanThemeEntries() {
 App::App(const char* argv0) {
     TimeStamp ts;
 
+    appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
+    ON_SCOPE_EXIT(appletSetCpuBoostMode(ApmCpuBoostMode_Normal));
+
     g_app = this;
     m_start_timestamp = armGetSystemTick();
     if (!std::strncmp(argv0, "sdmc:/", 6)) {
@@ -1251,20 +1300,86 @@ App::App(const char* argv0) {
         __nx_applet_exit_mode = 1;
     }
 
+    // get emummc config.
+    alignas(0x1000) AmsEmummcPaths paths{};
+    SecmonArgs args{};
+    args.X[0] = 0xF0000404; /* smcAmsGetEmunandConfig */
+    args.X[1] = 0; /* EXO_EMUMMC_MMC_NAND*/
+    args.X[2] = (u64)&paths; /* out path */
+    svcCallSecureMonitor(&args);
+    m_emummc_paths = paths;
+
+    log_write("emummc : %u\n", App::IsEmummc());
+    if (App::IsEmummc()) {
+        log_write("[emummc] file based path: %s\n", m_emummc_paths.file_based_path);
+        log_write("[emummc] nintendo path: %s\n", m_emummc_paths.nintendo);
+    }
+
     fs::FsNativeSd fs;
-    fs.CreateDirectoryRecursively("/config/sphaira/assoc");
-    fs.CreateDirectoryRecursively("/config/sphaira/themes");
-    fs.CreateDirectoryRecursively("/config/sphaira/github");
-    fs.CreateDirectoryRecursively("/config/sphaira/i18n");
+    fs.CreateDirectoryRecursively("/config/sphaira");
+    fs.CreateDirectory("/config/sphaira/assoc");
+    fs.CreateDirectory("/config/sphaira/themes");
+    fs.CreateDirectory("/config/sphaira/github");
+    fs.CreateDirectory("/config/sphaira/i18n");
+
+    auto cb = [](const mTCHAR *Section, const mTCHAR *Key, const mTCHAR *Value, void *UserData) -> int {
+        auto app = static_cast<App*>(UserData);
+
+        if (!std::strcmp(Section, INI_SECTION)) {
+            if (app->m_nxlink_enabled.LoadFrom(Key, Value)) {}
+            else if (app->m_mtp_enabled.LoadFrom(Key, Value)) {}
+            else if (app->m_ftp_enabled.LoadFrom(Key, Value)) {}
+            else if (app->m_hdd_enabled.LoadFrom(Key, Value)) {}
+            else if (app->m_hdd_write_protect.LoadFrom(Key, Value)) {}
+            else if (app->m_log_enabled.LoadFrom(Key, Value)) {}
+            else if (app->m_replace_hbmenu.LoadFrom(Key, Value)) {}
+            else if (app->m_theme_path.LoadFrom(Key, Value)) {}
+            else if (app->m_theme_music.LoadFrom(Key, Value)) {}
+            else if (app->m_12hour_time.LoadFrom(Key, Value)) {}
+            else if (app->m_language.LoadFrom(Key, Value)) {}
+            else if (app->m_left_menu.LoadFrom(Key, Value)) {}
+            else if (app->m_right_menu.LoadFrom(Key, Value)) {}
+            else if (app->m_install_sysmmc.LoadFrom(Key, Value)) {}
+            else if (app->m_install_emummc.LoadFrom(Key, Value)) {}
+            else if (app->m_install_sd.LoadFrom(Key, Value)) {}
+            else if (app->m_install_prompt.LoadFrom(Key, Value)) {}
+            else if (app->m_progress_boost_mode.LoadFrom(Key, Value)) {}
+            else if (app->m_allow_downgrade.LoadFrom(Key, Value)) {}
+            else if (app->m_skip_if_already_installed.LoadFrom(Key, Value)) {}
+            else if (app->m_ticket_only.LoadFrom(Key, Value)) {}
+            else if (app->m_skip_base.LoadFrom(Key, Value)) {}
+            else if (app->m_skip_patch.LoadFrom(Key, Value)) {}
+            else if (app->m_skip_addon.LoadFrom(Key, Value)) {}
+            else if (app->m_skip_data_patch.LoadFrom(Key, Value)) {}
+            else if (app->m_skip_ticket.LoadFrom(Key, Value)) {}
+            else if (app->m_skip_nca_hash_verify.LoadFrom(Key, Value)) {}
+            else if (app->m_skip_rsa_header_fixed_key_verify.LoadFrom(Key, Value)) {}
+            else if (app->m_skip_rsa_npdm_fixed_key_verify.LoadFrom(Key, Value)) {}
+            else if (app->m_ignore_distribution_bit.LoadFrom(Key, Value)) {}
+            else if (app->m_convert_to_standard_crypto.LoadFrom(Key, Value)) {}
+            else if (app->m_lower_master_key.LoadFrom(Key, Value)) {}
+            else if (app->m_lower_system_version.LoadFrom(Key, Value)) {}
+        } else if (!std::strcmp(Section, "accessibility")) {
+            if (app->m_text_scroll_speed.LoadFrom(Key, Value)) {}
+        }
+
+        return 1;
+    };
+
+    // load all configs ahead of time, as this is actually faster than
+    // loading each config one by one as it avoids re-opening the file multiple times.
+    ini_browse(cb, this, CONFIG_PATH);
+
+    i18n::init(GetLanguage());
 
     if (App::GetLogEnable()) {
         log_file_init();
-        log_write("hello world\n");
+        log_write("hello world v%s\n", APP_VERSION_HASH);
         App::Notify("Warning! Logs are enabled, Sphaira will run slowly!"_i18n);
     }
 
     if (App::GetMtpEnable()) {
-        hazeInitialize(haze_callback, 0x2C, 2);
+        hazeInitialize(haze_callback, PRIO_PREEMPTIVE, 2);
     }
 
     if (App::GetFtpEnable()) {
@@ -1273,6 +1388,14 @@ App::App(const char* argv0) {
 
     if (App::GetNxlinkEnable()) {
         nxlinkInitialize(nxlink_callback);
+    }
+
+    if (App::GetWriteProtect()) {
+        usbHsFsSetFileSystemMountFlags(UsbHsFsMountFlags_ReadOnly);
+    }
+
+    if (App::GetHddEnable()) {
+        usbHsFsInitialize(1);
     }
 
     curl::Init();
@@ -1308,8 +1431,6 @@ App::App(const char* argv0) {
 
     this->renderer.emplace(s_width, s_height, this->device, this->queue, *this->pool_images, *this->pool_code, *this->pool_data);
     this->vg = nvgCreateDk(&*this->renderer, NVG_ANTIALIAS | NVG_STENCIL_STROKES);
-
-    i18n::init(GetLanguage());
 
     // not sure if these are meant to be deleted or not...
     PlFontData font_standard, font_extended, font_lang;
@@ -1374,17 +1495,14 @@ App::App(const char* argv0) {
 
     ScanThemeEntries();
 
-    fs::FsPath theme_path{};
-    constexpr fs::FsPath default_theme_path{"romfs:/themes/abyss_theme.ini"};
-    ini_gets("config", "theme", default_theme_path, theme_path, sizeof(theme_path), CONFIG_PATH);
-
     // try and load previous theme, default to previous version otherwise.
+    fs::FsPath theme_path = m_theme_path.Get();
     ThemeMeta theme_meta;
     if (R_SUCCEEDED(romfsInit())) {
         ON_SCOPE_EXIT(romfsExit());
         if (!LoadThemeMeta(theme_path, theme_meta)) {
             log_write("failed to load meta using default\n");
-            theme_path = default_theme_path;
+            theme_path = DEFAULT_THEME_PATH;
             LoadThemeMeta(theme_path, theme_meta);
         }
     }
@@ -1407,17 +1525,6 @@ App::App(const char* argv0) {
     // padInitializeDefault(&m_pad);
     padInitializeAny(&m_pad);
 
-    // usbHsFsSetFileSystemMountFlags(UsbHsFsMountFlags_ReadOnly);
-    // usbHsFsSetPopulateCallback();
-    // usbHsFsInitialize(0);
-
-    m_prev_timestamp = ini_getl("paths", "timestamp", 0, App::CONFIG_PATH);
-    const auto last_launch_path_size = ini_gets("paths", "last_launch_path", "", m_prev_last_launch, sizeof(m_prev_last_launch), App::CONFIG_PATH);
-    fs::FsPath last_launch_path;
-    if (last_launch_path_size) {
-        ini_gets("paths", "last_launch_path", "", last_launch_path, sizeof(last_launch_path), App::CONFIG_PATH);
-    }
-    ini_puts("paths", "last_launch_path", "", App::CONFIG_PATH);
 
     const auto loader_info_size = envGetLoaderInfoSize();
     if (loader_info_size) {
@@ -1432,20 +1539,12 @@ App::App(const char* argv0) {
     }
 
     ini_putl(GetExePath(), "timestamp", m_start_timestamp, App::PLAYLOG_PATH);
-    const long old_launch_count = ini_getl(GetExePath(), "launch_count", 0, App::PLAYLOG_PATH);
-    ini_putl(GetExePath(), "launch_count", old_launch_count + 1, App::PLAYLOG_PATH);
 
     // load default image
-    if (R_SUCCEEDED(romfsInit())) {
-        ON_SCOPE_EXIT(romfsExit());
-        const auto image = ImageLoadFromFile("romfs:/default.png");
-        if (!image.data.empty()) {
-            m_default_image = nvgCreateImageRGBA(vg, image.w, image.h, 0, image.data.data());
-        }
-    }
+    m_default_image = nvgCreateImageMem(vg, 0, DEFAULT_IMAGE_DATA, std::size(DEFAULT_IMAGE_DATA));
 
     App::Push(std::make_shared<ui::menu::main::MainMenu>());
-    log_write("finished app constructor, time taken: %.2fs %zums\n", ts.GetSecondsD(), ts.GetMs());
+    log_write("\n\tfinished app constructor, time taken: %.2fs %zums\n\n", ts.GetSecondsD(), ts.GetMs());
 }
 
 void App::PlaySoundEffect(SoundEffect effect) {
@@ -1510,16 +1609,44 @@ void App::DisplayMiscOptions(bool left_side) {
     ON_SCOPE_EXIT(App::Push(options));
 
     for (auto& e : ui::menu::main::GetMiscMenuEntries()) {
-        if (e.name == g_app->m_right_side_menu.Get()) {
+        if (e.name == g_app->m_left_menu.Get()) {
             continue;
-        }
-
-        if (e.IsInstall() && !App::GetInstallEnable()) {
+        } else if (e.name == g_app->m_right_menu.Get()) {
+            continue;
+        } else if (e.IsInstall() && !App::GetInstallEnable()) {
             continue;
         }
 
         options->Add(std::make_shared<ui::SidebarEntryCallback>(i18n::get(e.title), [e](){
-            App::Push(e.func());
+            App::Push(e.func(ui::menu::MenuFlag_None));
+        }));
+    }
+
+    if (App::IsApplication()) {
+        options->Add(std::make_shared<ui::SidebarEntryCallback>("Web"_i18n, [](){
+            // add some default entries, will use a config file soon so users can set their own.
+            ui::PopupList::Items items;
+            items.emplace_back("https://lite.duckduckgo.com/lite");
+            items.emplace_back("https://dns.switchbru.com");
+            items.emplace_back("https://gbatemp.net");
+            items.emplace_back("https://github.com/ITotalJustice/sphaira/wiki");
+            items.emplace_back("Enter custom URL"_i18n);
+
+            App::Push(std::make_shared<ui::PopupList>(
+                "Select URL"_i18n, items, [items](auto op_index){
+                    if (op_index) {
+                        const auto index = *op_index;
+                        if (index == items.size() - 1) {
+                            std::string out;
+                            if (R_SUCCEEDED(swkbd::ShowText(out, "Enter URL"_i18n.c_str(), "https://")) && !out.empty()) {
+                                WebShow(out);
+                            }
+                        } else {
+                            WebShow(items[index]);
+                        }
+                    }
+                }
+            ));
         }));
     }
 }
@@ -1533,7 +1660,8 @@ void App::DisplayAdvancedOptions(bool left_side) {
     text_scroll_speed_items.push_back("Normal"_i18n);
     text_scroll_speed_items.push_back("Fast"_i18n);
 
-    std::vector<const char*> menu_names;
+    std::vector<std::string> menu_names;
+    ui::SidebarEntryArray::Items menu_items;
     for (auto& e : ui::menu::main::GetMiscMenuEntries()) {
         if (!e.IsShortcut()) {
             continue;
@@ -1544,16 +1672,7 @@ void App::DisplayAdvancedOptions(bool left_side) {
         }
 
         menu_names.emplace_back(e.name);
-    }
-
-    ui::SidebarEntryArray::Items right_side_menu_items;
-    for (auto& str : menu_names) {
-        right_side_menu_items.push_back(i18n::get(str));
-    }
-
-    const auto it = std::find(menu_names.cbegin(), menu_names.cend(), g_app->m_right_side_menu.Get());
-    if (it == menu_names.cend()) {
-        g_app->m_right_side_menu.Set(menu_names[0]);
+        menu_items.push_back(i18n::get(e.name));
     }
 
     options->Add(std::make_shared<ui::SidebarEntryBool>("Logging"_i18n, App::GetLogEnable(), [](bool& enable){
@@ -1564,24 +1683,54 @@ void App::DisplayAdvancedOptions(bool left_side) {
         App::SetReplaceHbmenuEnable(enable);
     }));
 
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Boost CPU during transfer"_i18n, App::GetApp()->m_progress_boost_mode.Get(), [](bool& enable){
+        App::GetApp()->m_progress_boost_mode.Set(enable);
+    }));
+
     options->Add(std::make_shared<ui::SidebarEntryArray>("Text scroll speed"_i18n, text_scroll_speed_items, [](s64& index_out){
         App::SetTextScrollSpeed(index_out);
     }, App::GetTextScrollSpeed()));
 
-    options->Add(std::make_shared<ui::SidebarEntryArray>("Set right-side menu"_i18n, right_side_menu_items, [menu_names](s64& index_out){
+    options->Add(std::make_shared<ui::SidebarEntryArray>("Set left-side menu"_i18n, menu_items, [menu_names](s64& index_out){
         const auto e = menu_names[index_out];
-        if (g_app->m_right_side_menu.Get() != e) {
-            g_app->m_right_side_menu.Set(e);
+        if (g_app->m_left_menu.Get() != e) {
+            // swap menus around.
+            if (g_app->m_right_menu.Get() == e) {
+                g_app->m_right_menu.Set(g_app->m_left_menu.Get());
+            }
+            g_app->m_left_menu.Set(e);
+
             App::Push(std::make_shared<ui::OptionBox>(
                 "Press OK to restart Sphaira"_i18n, "OK"_i18n, [](auto){
                     App::ExitRestart();
                 }
             ));
         }
-    }, i18n::get(g_app->m_right_side_menu.Get())));
+    }, i18n::get(g_app->m_left_menu.Get())));
+
+    options->Add(std::make_shared<ui::SidebarEntryArray>("Set right-side menu"_i18n, menu_items, [menu_names](s64& index_out){
+        const auto e = menu_names[index_out];
+        if (g_app->m_right_menu.Get() != e) {
+            // swap menus around.
+            if (g_app->m_left_menu.Get() == e) {
+                g_app->m_left_menu.Set(g_app->m_right_menu.Get());
+            }
+            g_app->m_right_menu.Set(e);
+
+            App::Push(std::make_shared<ui::OptionBox>(
+                "Press OK to restart Sphaira"_i18n, "OK"_i18n, [](auto){
+                    App::ExitRestart();
+                }
+            ));
+        }
+    }, i18n::get(g_app->m_right_menu.Get())));
 
     options->Add(std::make_shared<ui::SidebarEntryCallback>("Install options"_i18n, [left_side](){
         App::DisplayInstallOptions(left_side);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryCallback>("Dump options"_i18n, [left_side](){
+        App::DisplayDumpOptions(left_side);
     }));
 }
 
@@ -1608,10 +1757,6 @@ void App::DisplayInstallOptions(bool left_side) {
     options->Add(std::make_shared<ui::SidebarEntryArray>("Install location"_i18n, install_items, [](s64& index_out){
         App::SetInstallSdEnable(index_out);
     }, (s64)App::GetInstallSdEnable()));
-
-    options->Add(std::make_shared<ui::SidebarEntryBool>("Boost CPU clock"_i18n, App::GetApp()->m_boost_mode.Get(), [](bool& enable){
-        App::GetApp()->m_boost_mode.Set(enable);
-    }));
 
     options->Add(std::make_shared<ui::SidebarEntryBool>("Allow downgrade"_i18n, App::GetApp()->m_allow_downgrade.Get(), [](bool& enable){
         App::GetApp()->m_allow_downgrade.Set(enable);
@@ -1645,7 +1790,7 @@ void App::DisplayInstallOptions(bool left_side) {
         App::GetApp()->m_skip_ticket.Set(enable);
     }));
 
-    options->Add(std::make_shared<ui::SidebarEntryBool>("skip NCA hash verify"_i18n, App::GetApp()->m_skip_nca_hash_verify.Get(), [](bool& enable){
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Skip NCA hash verify"_i18n, App::GetApp()->m_skip_nca_hash_verify.Get(), [](bool& enable){
         App::GetApp()->m_skip_nca_hash_verify.Set(enable);
     }));
 
@@ -1674,7 +1819,35 @@ void App::DisplayInstallOptions(bool left_side) {
     }));
 }
 
+void App::DisplayDumpOptions(bool left_side) {
+    auto options = std::make_shared<ui::Sidebar>("Dump Options"_i18n, left_side ? ui::Sidebar::Side::LEFT : ui::Sidebar::Side::RIGHT);
+    ON_SCOPE_EXIT(App::Push(options));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Created nested folder"_i18n, App::GetApp()->m_dump_app_folder.Get(), [](bool& enable){
+        App::GetApp()->m_dump_app_folder.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Append folder with .xci"_i18n, App::GetApp()->m_dump_append_folder_with_xci.Get(), [](bool& enable){
+        App::GetApp()->m_dump_append_folder_with_xci.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Trim XCI"_i18n, App::GetApp()->m_dump_trim_xci.Get(), [](bool& enable){
+        App::GetApp()->m_dump_trim_xci.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Label trimmed XCI"_i18n, App::GetApp()->m_dump_label_trim_xci.Get(), [](bool& enable){
+        App::GetApp()->m_dump_label_trim_xci.Set(enable);
+    }));
+
+    options->Add(std::make_shared<ui::SidebarEntryBool>("Multi-threaded USB transfer"_i18n, App::GetApp()->m_dump_usb_transfer_stream.Get(), [](bool& enable){
+        App::GetApp()->m_dump_usb_transfer_stream.Set(enable);
+    }));
+}
+
 App::~App() {
+    appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
+    ON_SCOPE_EXIT(appletSetCpuBoostMode(ApmCpuBoostMode_Normal));
+
     log_write("starting to exit\n");
 
     i18n::exit();
@@ -1772,14 +1945,15 @@ App::~App() {
         nxlinkExit();
     }
 
+    if (App::GetHddEnable()) {
+        log_write("closing hdd\n");
+        usbHsFsExit();
+    }
+
     if (App::GetLogEnable()) {
         log_write("closing log\n");
         log_file_exit();
     }
-
-    u64 timestamp;
-    timeGetCurrentTime(TimeType_LocalSystemClock, &timestamp);
-    ini_putl("paths", "timestamp", timestamp, App::CONFIG_PATH);
 }
 
 auto App::GetVersionFromString(const char* str) -> u32 {

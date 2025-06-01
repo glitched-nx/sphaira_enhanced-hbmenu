@@ -16,8 +16,18 @@
 
 namespace sphaira::yati {
 
-enum { YatiModule = 521 };
+enum { YatiModule = 506 };
 
+/*
+Improving compression ratio via block splitting is now enabled by default for high compression levels (16+).
+The amount of benefit varies depending on the workload.
+Compressing archives comprised of heavily differing files will see more improvement than compression of single files that don’t
+ vary much entropically (like text files/enwik). At levels 16+, we observe no measurable regression to compression speed.
+
+The block splitter can be forcibly enabled on lower compression levels as well with the advanced parameter ZSTD_c_splitBlocks.
+When forcibly enabled at lower levels, speed regressions can become more notable.
+Additionally, since more compressed blocks may be produced, decompression speed on these blobs may also see small regressions.
+*/
 enum : Result {
     // unkown container for the source provided.
     Result_ContainerNotFound = MAKERESULT(YatiModule, 10),
@@ -69,10 +79,6 @@ enum : Result {
 
 struct Config {
     bool sd_card_install{};
-
-    // sets the performance mode to FastLoad which boosts the CPU clock
-    // and lowers the GPU clock.
-    bool boost_mode{};
 
     // enables downgrading patch / data patch (dlc) version.
     bool allow_downgrade{};
@@ -129,8 +135,7 @@ struct ConfigOverride {
     std::optional<bool> lower_system_version{};
 };
 
-Result InstallFromFile(ui::ProgressBox* pbox, FsFileSystem* fs, const fs::FsPath& path, const ConfigOverride& override = {});
-Result InstallFromStdioFile(ui::ProgressBox* pbox, const fs::FsPath& path, const ConfigOverride& override = {});
+Result InstallFromFile(ui::ProgressBox* pbox, fs::Fs* fs, const fs::FsPath& path, const ConfigOverride& override = {});
 Result InstallFromSource(ui::ProgressBox* pbox, std::shared_ptr<source::Base> source, const fs::FsPath& path, const ConfigOverride& override = {});
 Result InstallFromContainer(ui::ProgressBox* pbox, std::shared_ptr<container::Base> container, const ConfigOverride& override = {});
 Result InstallFromCollections(ui::ProgressBox* pbox, std::shared_ptr<source::Base> source, const container::Collections& collections, const ConfigOverride& override = {});
