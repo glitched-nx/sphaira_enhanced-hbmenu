@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.13)
 
-set(sphaira_VERSION 0.11.3)
+set(sphaira_VERSION 0.12.0)
 
 project(sphaira
     VERSION ${sphaira_VERSION}
@@ -41,6 +41,7 @@ add_executable(sphaira
     source/ui/menus/irs_menu.cpp
     source/ui/menus/main_menu.cpp
     source/ui/menus/menu_base.cpp
+    source/ui/menus/save_menu.cpp
     source/ui/menus/themezer.cpp
     source/ui/menus/ghdl.cpp
     source/ui/menus/usb_menu.cpp
@@ -80,6 +81,7 @@ add_executable(sphaira
     source/i18n.cpp
     source/ftpsrv_helper.cpp
     source/threaded_file_transfer.cpp
+    source/minizip_helper.cpp
 
     source/usb/base.cpp
     source/usb/usbds.cpp
@@ -199,8 +201,8 @@ FetchContent_Declare(libusbhsfs
 )
 
 FetchContent_Declare(libnxtc
-    GIT_REPOSITORY https://github.com/DarkMatterCore/libnxtc.git
-    GIT_TAG v0.0.2
+    GIT_REPOSITORY https://github.com/ITotalJustice/libnxtc.git
+    GIT_TAG 0d369b8
 )
 
 FetchContent_Declare(nvjpg
@@ -274,7 +276,7 @@ set(FTPSRV_LIB_SESSIONS 16)
 set(FTPSRV_LIB_BUF_SIZE 1024*64)
 
 set(FTPSRV_LIB_CUSTOM_DEFINES
-    USE_VFS_SAVE=$<BOOL:TRUE>
+    USE_VFS_SAVE=$<BOOL:FALSE>
     USE_VFS_STORAGE=$<BOOL:TRUE>
     # disabled as it may conflict with the gamecard menu.
     USE_VFS_GC=$<BOOL:FALSE>
@@ -293,7 +295,6 @@ add_library(ftpsrv_helper
     ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_none.c
     ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_root.c
     ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_fs.c
-    ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_save.c
     ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_storage.c
     ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_stdio.c
     ${ftpsrv_SOURCE_DIR}/src/platform/nx/vfs/vfs_nx_hdd.c
