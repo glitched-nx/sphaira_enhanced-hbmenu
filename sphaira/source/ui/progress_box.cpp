@@ -21,7 +21,7 @@ void threadFunc(void* arg) {
 
 ProgressBox::ProgressBox(int image, const std::string& action, const std::string& title, ProgressBoxCallback callback, ProgressBoxDoneCallback done, int cpuid, int prio, int stack_size) {
     if (App::GetApp()->m_progress_boost_mode.Get()) {
-        appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
+        App::SetBoostMode(true);
     }
 
     SetAction(Button::B, Action{"Back"_i18n, [this](){
@@ -67,7 +67,7 @@ ProgressBox::~ProgressBox() {
     FreeImage();
     m_done(m_thread_data.result);
 
-    appletSetCpuBoostMode(ApmCpuBoostMode_Normal);
+    App::SetBoostMode(false);
 }
 
 auto ProgressBox::Update(Controller* controller, TouchInfo* touch) -> void {
@@ -258,12 +258,12 @@ auto ProgressBox::ShouldExit() -> bool {
 
 auto ProgressBox::ShouldExitResult() -> Result {
     if (ShouldExit()) {
-        R_THROW(0xFFFF);
+        R_THROW(Result_TransferCancelled);
     }
     R_SUCCEED();
 }
 
-auto ProgressBox::CopyFile(fs::Fs* fs_src, fs::Fs* fs_dst, const fs::FsPath& src_path, const fs::FsPath& dst_path) -> Result {
+auto ProgressBox::CopyFile(fs::Fs* fs_src, fs::Fs* fs_dst, const fs::FsPath& src_path, const fs::FsPath& dst_path, bool single_threaded) -> Result {
     const auto is_file_based_emummc = App::IsFileBaseEmummc();
     const auto is_both_native = fs_src->IsNative() && fs_dst->IsNative();
 
@@ -300,20 +300,20 @@ auto ProgressBox::CopyFile(fs::Fs* fs_src, fs::Fs* fs_dst, const fs::FsPath& src
             }
 
             return rc;
-        }
+        }, single_threaded ? thread::Mode::SingleThreaded : thread::Mode::MultiThreaded
     ));
 
     R_SUCCEED();
 }
 
-auto ProgressBox::CopyFile(fs::Fs* fs, const fs::FsPath& src_path, const fs::FsPath& dst_path) -> Result {
-    return CopyFile(fs, fs, src_path, dst_path);
+auto ProgressBox::CopyFile(fs::Fs* fs, const fs::FsPath& src_path, const fs::FsPath& dst_path, bool single_threaded) -> Result {
+    return CopyFile(fs, fs, src_path, dst_path, single_threaded);
 }
 
-auto ProgressBox::CopyFile(const fs::FsPath& src_path, const fs::FsPath& dst_path) -> Result {
+auto ProgressBox::CopyFile(const fs::FsPath& src_path, const fs::FsPath& dst_path, bool single_threaded) -> Result {
     fs::FsNativeSd fs;
     R_TRY(fs.GetFsOpenResult());
-    return CopyFile(&fs, src_path, dst_path);
+    return CopyFile(&fs, src_path, dst_path, single_threaded);
 }
 
 void ProgressBox::Yield() {

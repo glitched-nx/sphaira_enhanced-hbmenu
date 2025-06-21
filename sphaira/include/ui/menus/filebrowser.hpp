@@ -2,6 +2,7 @@
 
 #include "ui/menus/menu_base.hpp"
 #include "ui/scrolling_text.hpp"
+#include "ui/progress_box.hpp"
 #include "ui/list.hpp"
 #include "fs.hpp"
 #include "option.hpp"
@@ -154,6 +155,8 @@ struct FsDirCollection {
 
 using FsDirCollections = std::vector<FsDirCollection>;
 
+void SignalChange();
+
 struct Menu;
 
 struct FsView final : Widget {
@@ -181,6 +184,7 @@ struct FsView final : Widget {
 
     void SetSide(ViewSide side);
 
+    static Result DeleteAllCollections(ProgressBox* pbox, fs::Fs* fs, const FsDirCollections& collections, u32 mode = FsDirOpenMode_ReadDirs|FsDirOpenMode_ReadFiles);
     static auto get_collection(fs::Fs* fs, const fs::FsPath& path, const fs::FsPath& parent_name, FsDirCollection& out, bool inc_file, bool inc_dir, bool inc_size) -> Result;
     static auto get_collections(fs::Fs* fs, const fs::FsPath& path, const fs::FsPath& parent_name, FsDirCollections& out, bool inc_size = false) -> Result;
 
@@ -244,7 +248,7 @@ private:
     }
 
     void Sort();
-    void SortAndFindLastFile();
+    void SortAndFindLastFile(bool scan = false);
     void SetIndexFromLastFile(const LastFile& last_file);
 
     void OnDeleteCallback();

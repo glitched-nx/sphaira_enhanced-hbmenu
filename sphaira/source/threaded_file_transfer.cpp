@@ -155,7 +155,7 @@ ThreadData::ThreadData(ui::ProgressBox* _pbox, s64 size, ReadCallback _rfunc, Wr
 }
 
 auto ThreadData::GetResults() -> Result {
-    R_UNLESS(!pbox->ShouldExit(), 0x1);
+    R_UNLESS(!pbox->ShouldExit(), Result_TransferCancelled);
     R_TRY(read_result);
     R_TRY(write_result);
     R_TRY(pull_result);
@@ -416,21 +416,21 @@ Result TransferInternal(ui::ProgressBox* pbox, s64 size, ReadCallback rfunc, Wri
 } // namespace
 
 Result Transfer(ui::ProgressBox* pbox, s64 size, ReadCallback rfunc, WriteCallback wfunc, Mode mode) {
-    return TransferInternal(pbox, size, rfunc, wfunc, nullptr, Mode::MultiThreaded);
+    return TransferInternal(pbox, size, rfunc, wfunc, nullptr, mode);
 }
 
 Result TransferPull(ui::ProgressBox* pbox, s64 size, ReadCallback rfunc, StartCallback sfunc, Mode mode) {
     return TransferInternal(pbox, size, rfunc, nullptr, [sfunc](StartThreadCallback start, PullCallback pull) -> Result {
         R_TRY(start());
         return sfunc(pull);
-    }, Mode::MultiThreaded);
+    }, mode);
 }
 
 Result TransferPull(ui::ProgressBox* pbox, s64 size, ReadCallback rfunc, StartCallback2 sfunc, Mode mode) {
-    return TransferInternal(pbox, size, rfunc, nullptr, sfunc, Mode::MultiThreaded);
+    return TransferInternal(pbox, size, rfunc, nullptr, sfunc, mode);
 }
 
-Result TransferUnzip(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs::FsPath& path, s64 size, u32 crc32) {
+Result TransferUnzip(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs::FsPath& path, s64 size, u32 crc32, Mode mode) {
     Result rc;
     if (R_FAILED(rc = fs->CreateDirectoryRecursivelyWithPath(path)) && rc != FsError_PathAlreadyExists) {
         log_write("failed to create folder: %s 0x%04X\n", path.s, rc);
@@ -458,7 +458,7 @@ Result TransferUnzip(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs::F
             const auto result = unzReadCurrentFile(zfile, data, size);
             if (result <= 0) {
                 log_write("failed to read zip file: %s %d\n", path.s, result);
-                R_THROW(0x1);
+                R_THROW(Result_UnzReadCurrentFile);
             }
 
             if (crc32) {
@@ -471,7 +471,7 @@ Result TransferUnzip(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs::F
         [&](const void* data, s64 off, s64 size) -> Result {
             return f.Write(off, data, size, FsWriteOption_None);
         },
-        nullptr, Mode::SingleThreadedIfSmaller, SMALL_BUFFER_SIZE
+        nullptr, mode, SMALL_BUFFER_SIZE
     ));
 
     // validate crc32 (if set in the info).
@@ -480,7 +480,7 @@ Result TransferUnzip(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs::F
     R_SUCCEED();
 }
 
-Result TransferZip(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs::FsPath& path, u32* crc32) {
+Result TransferZip(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs::FsPath& path, u32* crc32, Mode mode) {
     fs::File f;
     R_TRY(fs->OpenFile(path, FsOpenMode_Read, &f));
 
@@ -502,22 +502,22 @@ Result TransferZip(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs::FsP
         [&](const void* data, s64 off, s64 size) -> Result {
             if (ZIP_OK != zipWriteInFileInZip(zfile, data, size)) {
                 log_write("failed to write zip file: %s\n", path.s);
-                R_THROW(0x1);
+                R_THROW(Result_ZipWriteInFileInZip);
             }
             R_SUCCEED();
         },
-        nullptr, Mode::SingleThreadedIfSmaller, SMALL_BUFFER_SIZE
+        nullptr, mode, SMALL_BUFFER_SIZE
     );
 }
 
-Result TransferUnzipAll(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs::FsPath& base_path, UnzipAllFilter filter) {
+Result TransferUnzipAll(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs::FsPath& base_path, UnzipAllFilter filter, Mode mode) {
     unz_global_info64 ginfo;
     if (UNZ_OK != unzGetGlobalInfo64(zfile, &ginfo)) {
-        R_THROW(0x1);
+        R_THROW(Result_UnzGetGlobalInfo64);
     }
 
     if (UNZ_OK != unzGoToFirstFile(zfile)) {
-        R_THROW(0x1);
+        R_THROW(Result_UnzGoToFirstFile);
     }
 
     for (s64 i = 0; i < ginfo.number_entry; i++) {
@@ -526,13 +526,13 @@ Result TransferUnzipAll(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs
         if (i > 0) {
             if (UNZ_OK != unzGoToNextFile(zfile)) {
                 log_write("failed to unzGoToNextFile\n");
-                R_THROW(0x1);
+                R_THROW(Result_UnzGoToNextFile);
             }
         }
 
         if (UNZ_OK != unzOpenCurrentFile(zfile)) {
             log_write("failed to open current file\n");
-            R_THROW(0x1);
+            R_THROW(Result_UnzOpenCurrentFile);
         }
         ON_SCOPE_EXIT(unzCloseCurrentFile(zfile));
 
@@ -540,7 +540,7 @@ Result TransferUnzipAll(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs
         fs::FsPath name;
         if (UNZ_OK != unzGetCurrentFileInfo64(zfile, &info, name, sizeof(name), 0, 0, 0, 0)) {
             log_write("failed to get current info\n");
-            R_THROW(0x1);
+            R_THROW(Result_UnzGetCurrentFileInfo64);
         }
 
         // check if we should skip this file.
@@ -560,22 +560,22 @@ Result TransferUnzipAll(ui::ProgressBox* pbox, void* zfile, fs::Fs* fs, const fs
                 R_THROW(rc);
             }
         } else {
-            R_TRY(TransferUnzip(pbox, zfile, fs, path, info.uncompressed_size, info.crc));
+            R_TRY(TransferUnzip(pbox, zfile, fs, path, info.uncompressed_size, info.crc, mode));
         }
     }
 
     R_SUCCEED();
 }
 
-Result TransferUnzipAll(ui::ProgressBox* pbox, const fs::FsPath& zip_out, fs::Fs* fs, const fs::FsPath& base_path, UnzipAllFilter filter) {
+Result TransferUnzipAll(ui::ProgressBox* pbox, const fs::FsPath& zip_out, fs::Fs* fs, const fs::FsPath& base_path, UnzipAllFilter filter, Mode mode) {
     zlib_filefunc64_def file_func;
     mz::FileFuncStdio(&file_func);
 
     auto zfile = unzOpen2_64(zip_out, &file_func);
-    R_UNLESS(zfile, 0x1);
+    R_UNLESS(zfile, Result_UnzOpen2_64);
     ON_SCOPE_EXIT(unzClose(zfile));
 
-    return TransferUnzipAll(pbox, zfile, fs, base_path, filter);
+    return TransferUnzipAll(pbox, zfile, fs, base_path, filter, mode);
 }
 
 } // namespace::thread
