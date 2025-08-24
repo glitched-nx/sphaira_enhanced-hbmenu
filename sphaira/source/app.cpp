@@ -413,6 +413,14 @@ void on_i18n_change() {
 } // namespace
 
 void App::Loop() {
+    // adjust these if FPSlocker ever supports different min/max fps.
+    constexpr double min_delta    = 1000.0 / 120.0; // 120 fps
+    constexpr double max_delta    = 1000.0 / 15.0;  // 15  fps
+    constexpr double target_delta = 1000.0 / 60.0;  // 60  fps
+
+    u64 start = armTicksToNs(armGetSystemTick());
+    m_delta_time = 1.0;
+
     while (!m_quit && appletMainLoop()) {
         if (m_widgets.empty()) {
             m_quit = true;
@@ -497,6 +505,15 @@ void App::Loop() {
         this->Poll();
         this->Update();
         this->Draw();
+
+        // check how long this frame took.
+        const u64 now = armTicksToNs(armGetSystemTick());
+        // convert to ns.
+        const double delta = (double)(now - start) / 1e+6;
+        // clamp and normalise to 1.0 as the target, higher values if we took too long.
+        m_delta_time = std::clamp(delta, min_delta, max_delta) / target_delta;
+        // save timestamp for next frame.
+        start = now;
     }
 }
 
@@ -642,10 +659,6 @@ auto App::GetInstallEmummcEnable() -> bool {
 
 auto App::GetInstallSdEnable() -> bool {
     return g_app->m_install_sd.Get();
-}
-
-auto App::GetInstallPrompt() -> bool {
-    return g_app->m_install_prompt.Get();
 }
 
 auto App::GetThemeMusicEnable() -> bool {
@@ -830,10 +843,6 @@ void App::SetInstallEmummcEnable(bool enable) {
 
 void App::SetInstallSdEnable(bool enable) {
     g_app->m_install_sd.Set(enable);
-}
-
-void App::SetInstallPrompt(bool enable) {
-    g_app->m_install_prompt.Set(enable);
 }
 
 void App::SetThemeMusicEnable(bool enable) {
@@ -1024,7 +1033,7 @@ void App::Poll() {
         m_controller.m_kdown = padGetButtonsDown(&m_pad);
         m_controller.m_kheld = padGetButtons(&m_pad);
         m_controller.m_kup = padGetButtonsUp(&m_pad);
-        m_controller.UpdateButtonHeld(static_cast<u64>(Button::ANY_DIRECTION));
+        m_controller.UpdateButtonHeld(static_cast<u64>(Button::ANY_DIRECTION), m_delta_time);
     }
 }
 
@@ -1319,7 +1328,6 @@ App::App(const char* argv0) {
             else if (app->m_install_sysmmc.LoadFrom(Key, Value)) {}
             else if (app->m_install_emummc.LoadFrom(Key, Value)) {}
             else if (app->m_install_sd.LoadFrom(Key, Value)) {}
-            else if (app->m_install_prompt.LoadFrom(Key, Value)) {}
             else if (app->m_progress_boost_mode.LoadFrom(Key, Value)) {}
             else if (app->m_allow_downgrade.LoadFrom(Key, Value)) {}
             else if (app->m_skip_if_already_installed.LoadFrom(Key, Value)) {}
@@ -1598,15 +1606,17 @@ void App::DisplayThemeOptions(bool left_side) {
 
     options->Add<ui::SidebarEntryArray>("Select Theme"_i18n, theme_items, [](s64& index_out){
         App::SetTheme(index_out);
-    }, App::GetThemeIndex());
+    }, App::GetThemeIndex(), "Customise the look of Sphaira by changing the theme"_i18n);
 
     options->Add<ui::SidebarEntryBool>("Music"_i18n, App::GetThemeMusicEnable(), [](bool& enable){
         App::SetThemeMusicEnable(enable);
-    });
+    },  "Enable background music.\n"\
+        "Each theme can have it's own music file. "\
+        "If a theme does not set a music file, the default music is loaded instead (if it exists)."_i18n);
 
     options->Add<ui::SidebarEntryBool>("12 Hour Time"_i18n, App::Get12HourTimeEnable(), [](bool& enable){
         App::Set12HourTimeEnable(enable);
-    });
+    }, "Changes the clock to 12 hour"_i18n);
 
     options->Add<ui::SidebarEntryCallback>("Download Default Music"_i18n, [](){
         // check if we already have music
@@ -1623,7 +1633,7 @@ void App::DisplayThemeOptions(bool left_side) {
         } else {
             download_default_music();
         }
-    });
+    },  "Downloads the default background music for sphaira."_i18n);
 }
 
 void App::DisplayNetworkOptions(bool left_side) {
@@ -1639,13 +1649,15 @@ void App::DisplayMiscOptions(bool left_side) {
             continue;
         } else if (e.name == g_app->m_right_menu.Get()) {
             continue;
-        } else if (e.IsInstall() && !App::GetInstallEnable()) {
-            continue;
         }
 
-        options->Add<ui::SidebarEntryCallback>(i18n::get(e.title), [e](){
+        auto entry = options->Add<ui::SidebarEntryCallback>(i18n::get(e.title), [e](){
             App::Push(e.func(ui::menu::MenuFlag_None));
-        });
+        }, i18n::get(e.info));
+
+        if (e.IsInstall()) {
+            entry->Depends(App::GetInstallEnable, i18n::get(App::INSTALL_DEPENDS_STR), App::ShowEnableInstallPrompt);
+        }
     }
 
     if (App::IsApplication()) {
@@ -1673,7 +1685,9 @@ void App::DisplayMiscOptions(bool left_side) {
                     }
                 }
             );
-        });
+        },
+        "Launch the built-in web browser.\n\n",
+        "NOTE: The browser is very limted, some websites will fail to load and there's a 30 minute timeout which closes the browser"_i18n);
     }
 }
 
@@ -1693,29 +1707,26 @@ void App::DisplayAdvancedOptions(bool left_side) {
             continue;
         }
 
-        if (e.IsInstall() && !App::GetInstallEnable()) {
-            continue;
-        }
-
         menu_names.emplace_back(e.name);
         menu_items.push_back(i18n::get(e.name));
     }
 
     options->Add<ui::SidebarEntryBool>("Logging"_i18n, App::GetLogEnable(), [](bool& enable){
         App::SetLogEnable(enable);
-    });
+    }, "Logs to /config/sphaira/log.txt"_i18n);
 
     options->Add<ui::SidebarEntryBool>("Replace hbmenu on exit"_i18n, App::GetReplaceHbmenuEnable(), [](bool& enable){
         App::SetReplaceHbmenuEnable(enable);
-    });
+    }, "When enabled, it replaces /hbmenu.nro with Sphaira, creating a backup of hbmenu to /switch/hbmenu.nro\n\n" \
+       "Disabling will give you the option to restore hbmenu."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Boost CPU during transfer"_i18n, App::GetApp()->m_progress_boost_mode.Get(), [](bool& enable){
-        App::GetApp()->m_progress_boost_mode.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Boost CPU during transfer"_i18n, App::GetApp()->m_progress_boost_mode,
+        "Enables boost mode during transfers which can improve transfer speed. "\
+        "This sets the CPU to 1785mhz and lowers the GPU 76mhz"_i18n);
 
     options->Add<ui::SidebarEntryArray>("Text scroll speed"_i18n, text_scroll_speed_items, [](s64& index_out){
         App::SetTextScrollSpeed(index_out);
-    }, App::GetTextScrollSpeed());
+    }, App::GetTextScrollSpeed(), "Change how fast the scrolling text updates"_i18n);
 
     options->Add<ui::SidebarEntryArray>("Set left-side menu"_i18n, menu_items, [menu_names](s64& index_out){
         const auto e = menu_names[index_out];
@@ -1732,7 +1743,7 @@ void App::DisplayAdvancedOptions(bool left_side) {
                 }
             );
         }
-    }, i18n::get(g_app->m_left_menu.Get()));
+    }, i18n::get(g_app->m_left_menu.Get()), "Set the menu that appears on the left tab."_i18n);
 
     options->Add<ui::SidebarEntryArray>("Set right-side menu"_i18n, menu_items, [menu_names](s64& index_out){
         const auto e = menu_names[index_out];
@@ -1749,15 +1760,16 @@ void App::DisplayAdvancedOptions(bool left_side) {
                 }
             );
         }
-    }, i18n::get(g_app->m_right_menu.Get()));
+    }, i18n::get(g_app->m_right_menu.Get()), "Set the menu that appears on the right tab."_i18n);
 
     options->Add<ui::SidebarEntryCallback>("Install options"_i18n, [left_side](){
         App::DisplayInstallOptions(left_side);
-    });
+    },  "Change the install options.\n"\
+        "You can enable installing from here."_i18n);
 
     options->Add<ui::SidebarEntryCallback>("Dump options"_i18n, [left_side](){
         App::DisplayDumpOptions(left_side);
-    });
+    },  "Change the dump options."_i18n);
 
     static const char* erpt_path = "/atmosphere/erpt_reports";
     options->Add<ui::SidebarEntryBool>("Disable erpt_reports"_i18n, fs::FsNativeSd().FileExists(erpt_path), [](bool& enable){
@@ -1776,7 +1788,7 @@ void App::DisplayAdvancedOptions(bool left_side) {
             fs.DeleteFile(erpt_path);
             fs.CreateDirectory(erpt_path);
         }
-    });
+    }, "Disables error reports generated in /atmosphere/erpt_reports."_i18n);
 }
 
 void App::DisplayInstallOptions(bool left_side) {
@@ -1788,113 +1800,151 @@ void App::DisplayInstallOptions(bool left_side) {
     install_items.push_back("microSD card"_i18n);
 
     options->Add<ui::SidebarEntryBool>("Enable sysmmc"_i18n, App::GetInstallSysmmcEnable(), [](bool& enable){
-        App::SetInstallSysmmcEnable(enable);
-    });
+        ShowEnableInstallPromptOption(g_app->m_install_sysmmc, enable);
+    }, "Enables installing whilst in sysMMC mode."_i18n);
 
     options->Add<ui::SidebarEntryBool>("Enable emummc"_i18n, App::GetInstallEmummcEnable(), [](bool& enable){
-        App::SetInstallEmummcEnable(enable);
-    });
-
-    options->Add<ui::SidebarEntryBool>("Show install warning"_i18n, App::GetApp()->m_install_prompt.Get(), [](bool& enable){
-        App::GetApp()->m_install_prompt.Set(enable);
-    });
+        ShowEnableInstallPromptOption(g_app->m_install_emummc, enable);
+    }, "Enables installing whilst in emuMMC mode."_i18n);
 
     options->Add<ui::SidebarEntryArray>("Install location"_i18n, install_items, [](s64& index_out){
         App::SetInstallSdEnable(index_out);
     }, (s64)App::GetInstallSdEnable());
 
-    options->Add<ui::SidebarEntryBool>("Allow downgrade"_i18n, App::GetApp()->m_allow_downgrade.Get(), [](bool& enable){
-        App::GetApp()->m_allow_downgrade.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Allow downgrade"_i18n, App::GetApp()->m_allow_downgrade,
+        "Allows for installing title updates that are lower than the currently installed update."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Skip if already installed"_i18n, App::GetApp()->m_skip_if_already_installed.Get(), [](bool& enable){
-        App::GetApp()->m_skip_if_already_installed.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Skip if already installed"_i18n, App::GetApp()->m_skip_if_already_installed,
+        "Skips installing titles / ncas if they're already installed."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Ticket only"_i18n, App::GetApp()->m_ticket_only.Get(), [](bool& enable){
-        App::GetApp()->m_ticket_only.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Ticket only"_i18n, App::GetApp()->m_ticket_only,
+        "Installs tickets only, useful if the title was already installed however the tickets were missing or corrupted."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Skip base"_i18n, App::GetApp()->m_skip_base.Get(), [](bool& enable){
-        App::GetApp()->m_skip_base.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Skip base"_i18n, App::GetApp()->m_skip_base,
+        "Skips installing the base application."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Skip patch"_i18n, App::GetApp()->m_skip_patch.Get(), [](bool& enable){
-        App::GetApp()->m_skip_patch.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Skip patch"_i18n, App::GetApp()->m_skip_patch,
+        "Skips installing updates."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Skip dlc"_i18n, App::GetApp()->m_skip_addon.Get(), [](bool& enable){
-        App::GetApp()->m_skip_addon.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Skip dlc"_i18n, App::GetApp()->m_skip_addon,
+        "Skips installing DLC."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Skip data patch"_i18n, App::GetApp()->m_skip_data_patch.Get(), [](bool& enable){
-        App::GetApp()->m_skip_data_patch.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Skip data patch"_i18n, App::GetApp()->m_skip_data_patch,
+        "Skips installing DLC update (data patch)."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Skip ticket"_i18n, App::GetApp()->m_skip_ticket.Get(), [](bool& enable){
-        App::GetApp()->m_skip_ticket.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Skip ticket"_i18n, App::GetApp()->m_skip_ticket,
+        "Skips installing tickets, not recommended."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Skip NCA hash verify"_i18n, App::GetApp()->m_skip_nca_hash_verify.Get(), [](bool& enable){
-        App::GetApp()->m_skip_nca_hash_verify.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Skip NCA hash verify"_i18n, App::GetApp()->m_skip_nca_hash_verify,
+        "Enables the option to skip sha256 verification. This is a hash over the entire NCA. "\
+        "It is used to verify that the NCA is valid / not corrupted. "\
+        "You may have seen the option for \"checking for corrupted data\" when a corrupted game is installed. "\
+        "That check performs various hash checks, including the hash over the NCA.\n\n"\
+        "It is recommended to keep this disabled."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Skip RSA header verify"_i18n, App::GetApp()->m_skip_rsa_header_fixed_key_verify.Get(), [](bool& enable){
-        App::GetApp()->m_skip_rsa_header_fixed_key_verify.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Skip RSA header verify"_i18n, App::GetApp()->m_skip_rsa_header_fixed_key_verify,
+        "Enables the option to skip RSA NCA fixed key verification. "\
+        "This is a hash over the NCA header. It is used to verify that the header has not been modified. "\
+        "The header is signed by nintendo, thus it cannot be forged, and is reliable to detect modified NCA headers (such as NSP/XCI converts).\n\n"\
+        "It is recommended to keep this disabled, unless you need to install nsp/xci converts."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Skip RSA NPDM verify"_i18n, App::GetApp()->m_skip_rsa_npdm_fixed_key_verify.Get(), [](bool& enable){
-        App::GetApp()->m_skip_rsa_npdm_fixed_key_verify.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Skip RSA NPDM verify"_i18n, App::GetApp()->m_skip_rsa_npdm_fixed_key_verify,
+        "Enables the option to skip RSA NPDM fixed key verification.\n\n"\
+        "Currently, this option is stubbed (not implemented)."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Ignore distribution bit"_i18n, App::GetApp()->m_ignore_distribution_bit.Get(), [](bool& enable){
-        App::GetApp()->m_ignore_distribution_bit.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Ignore distribution bit"_i18n, App::GetApp()->m_ignore_distribution_bit,
+        "If set, it will ignore the distribution bit in the NCA header. "\
+        "The distribution bit is used to signify whether a NCA is Eshop or GameCard. "\
+        "You cannot (normally) launch install games that have the distruction bit set to GameCard.\n\n"\
+        "It is recommended to keep this disabled."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Convert to common ticket"_i18n, App::GetApp()->m_convert_to_common_ticket.Get(), [](bool& enable){
-        App::GetApp()->m_convert_to_common_ticket.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Convert to common ticket"_i18n, App::GetApp()->m_convert_to_common_ticket,
+        "[Requires keys] Converts personalised tickets to common (fake) tickets.\n\n"\
+        "It is recommended to keep this enabled."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Convert to standard crypto"_i18n, App::GetApp()->m_convert_to_standard_crypto.Get(), [](bool& enable){
-        App::GetApp()->m_convert_to_standard_crypto.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Convert to standard crypto"_i18n, App::GetApp()->m_convert_to_standard_crypto,
+        "[Requires keys] Converts titlekey to standard crypto, also known as \"ticketless\".\n\n"\
+        "It is recommended to keep this disabled."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Lower master key"_i18n, App::GetApp()->m_lower_master_key.Get(), [](bool& enable){
-        App::GetApp()->m_lower_master_key.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Lower master key"_i18n, App::GetApp()->m_lower_master_key,
+        "[Requires keys] Encrypts the keak (key area key) with master key 0, which allows the game to be launched on every fw. "\
+        "Implicitly performs standard crypto.\n\n"\
+        "Do note that just because the game can be launched on any fw (as it can be decrypted), doesn't mean it will work. It is strongly recommened to update your firmware and Atmosphere version in order to play the game, rather than enabling this option.\n\n"\
+        "It is recommended to keep this disabled."_i18n);
 
-    options->Add<ui::SidebarEntryBool>("Lower system version"_i18n, App::GetApp()->m_lower_system_version.Get(), [](bool& enable){
-        App::GetApp()->m_lower_system_version.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>("Lower system version"_i18n, App::GetApp()->m_lower_system_version,
+        "Sets the system_firmware field in the cnmt extended header to 0. "\
+        "Note: if the master key is higher than fw version, the game still won't launch as the fw won't have the key to decrypt keak (see above).\n\n"\
+        "It is recommended to keep this disabled."_i18n);
 }
 
 void App::DisplayDumpOptions(bool left_side) {
     auto options = std::make_unique<ui::Sidebar>("Dump Options"_i18n, left_side ? ui::Sidebar::Side::LEFT : ui::Sidebar::Side::RIGHT);
     ON_SCOPE_EXIT(App::Push(std::move(options)));
 
-    options->Add<ui::SidebarEntryBool>("Created nested folder"_i18n, App::GetApp()->m_dump_app_folder.Get(), [](bool& enable){
-        App::GetApp()->m_dump_app_folder.Set(enable);
-    });
+    options->Add<ui::SidebarEntryBool>(
+        "Created nested folder"_i18n, App::GetApp()->m_dump_app_folder,
+        "Creates a folder using the name of the game.\n"\
+        "For example, /dumps/XCI/name/name.xci"\
+        "Disabling this would use /dumps/XCI/name.xci"_i18n
+    );
+    options->Add<ui::SidebarEntryBool>(
+        "Append folder with .xci"_i18n, App::GetApp()->m_dump_append_folder_with_xci,
+        "XCI dumps will name the folder with the .xci extension.\n"\
+        "For example, /dumps/XCI/name.xci/name.xci\n\n"
+        "Some devices only function is the xci folder is named exactly the same as the xci."_i18n
+    );
+    options->Add<ui::SidebarEntryBool>(
+        "Trim XCI"_i18n, App::GetApp()->m_dump_trim_xci,
+        "Removes the unused data at the end of the XCI, making the output smaller."_i18n
+    );
+    options->Add<ui::SidebarEntryBool>(
+        "Label trimmed XCI"_i18n, App::GetApp()->m_dump_label_trim_xci,
+        "Names the trimmed xci.\n"
+        "For example, /dumps/XCI/name/name (trimmed).xci"_i18n
+    );
+    options->Add<ui::SidebarEntryBool>(
+        "Convert to common ticket"_i18n, App::GetApp()->m_dump_convert_to_common_ticket,
+        "Converts personalised ticket to a fake common ticket."_i18n
+    );
+}
 
-    options->Add<ui::SidebarEntryBool>("Append folder with .xci"_i18n, App::GetApp()->m_dump_append_folder_with_xci.Get(), [](bool& enable){
-        App::GetApp()->m_dump_append_folder_with_xci.Set(enable);
-    });
+void App::ShowEnableInstallPrompt() {
+    // warn the user the dangers of installing.
+    App::Push<ui::OptionBox>(
+        "Installing is disabled, enable now?"_i18n,
+        "Back"_i18n, "Enable"_i18n, 0, [](auto op_index){
+            if (op_index && *op_index) {
+                // get the install option based on sysmmc/emummc.
+                auto& option = IsEmummc() ? g_app->m_install_emummc : g_app->m_install_sysmmc;
 
-    options->Add<ui::SidebarEntryBool>("Trim XCI"_i18n, App::GetApp()->m_dump_trim_xci.Get(), [](bool& enable){
-        App::GetApp()->m_dump_trim_xci.Set(enable);
-    });
+                // dummy ref.
+                static bool enable{};
+                enable = true;
 
-    options->Add<ui::SidebarEntryBool>("Label trimmed XCI"_i18n, App::GetApp()->m_dump_label_trim_xci.Get(), [](bool& enable){
-        App::GetApp()->m_dump_label_trim_xci.Set(enable);
-    });
+                return ShowEnableInstallPromptOption(option, enable);
+            }
+        }
+    );
+}
 
-    options->Add<ui::SidebarEntryBool>("Multi-threaded USB transfer"_i18n, App::GetApp()->m_dump_usb_transfer_stream.Get(), [](bool& enable){
-        App::GetApp()->m_dump_usb_transfer_stream.Set(enable);
-    });
-
-    options->Add<ui::SidebarEntryBool>("Convert to common ticket"_i18n, App::GetApp()->m_dump_convert_to_common_ticket.Get(), [](bool& enable){
-        App::GetApp()->m_dump_convert_to_common_ticket.Set(enable);
-    });
+void App::ShowEnableInstallPromptOption(option::OptionBool& option, bool& enable) {
+    if (enable) {
+        // warn the user the dangers of installing.
+        App::Push<ui::OptionBox>(
+            "WARNING: Installing apps will lead to a ban!"_i18n,
+            "Back"_i18n, "Enable"_i18n, 0, [&option, &enable](auto op_index){
+                if (op_index && *op_index) {
+                    option.Set(true);
+                    App::Notify("Installing enabled!"_i18n);
+                } else {
+                    enable = false;
+                }
+            }
+        );
+    } else {
+        option.Set(false);
+    }
 }
 
 App::~App() {

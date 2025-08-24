@@ -38,11 +38,32 @@
 #include <span>
 #include <utility>
 #include <ranges>
-// #include <stack>
 #include <expected>
 
 namespace sphaira::ui::menu::filebrowser {
 namespace {
+
+using RomDatabaseIndexs = std::vector<size_t>;
+
+struct ForwarderForm final : public Sidebar {
+    explicit ForwarderForm(const FileAssocEntry& assoc, const RomDatabaseIndexs& db_indexs, const FileEntry& entry, const fs::FsPath& arg_path);
+
+private:
+    auto LoadNroMeta() -> Result;
+
+private:
+    const FileAssocEntry m_assoc;
+    const RomDatabaseIndexs m_db_indexs;
+    const fs::FsPath m_arg_path;
+
+    NroEntry m_nro{};
+    NacpStruct m_nacp{};
+
+    SidebarEntryTextInput* m_name{};
+    SidebarEntryTextInput* m_author{};
+    SidebarEntryTextInput* m_version{};
+    SidebarEntryFilePicker* m_icon{};
+};
 
 constinit UEvent g_change_uevent;
 
@@ -84,6 +105,10 @@ constexpr std::string_view ZIP_EXTENSIONS[] = {
     "zip",
 };
 
+// case insensitive check
+auto IsSamePath(std::string_view a, std::string_view b) -> bool {
+    return a.length() == b.length() && !strncasecmp(a.data(), b.data(), a.length());
+}
 
 struct RomDatabaseEntry {
     // uses the naming scheme from retropie.
@@ -95,12 +120,12 @@ struct RomDatabaseEntry {
 
     // compares against all of the above strings.
     auto IsDatabase(std::string_view name) const {
-        if (name == folder || name == database) {
+        if (IsSamePath(name, folder) || IsSamePath(name, database)) {
             return true;
         }
 
         for (const auto& str : alias) {
-            if (!str.empty() && name == str) {
+            if (!str.empty() && IsSamePath(name, str)) {
                 return true;
             }
         }
@@ -172,7 +197,6 @@ auto IsExtension(std::string_view ext1, std::string_view ext2) -> bool {
 // tries to find database path using folder name
 // names are taken from retropie
 // retroarch database names can also be used
-using RomDatabaseIndexs = std::vector<size_t>;
 auto GetRomDatabaseFromPath(std::string_view path) -> RomDatabaseIndexs {
     if (path.length() <= 1) {
         return {};
@@ -212,7 +236,7 @@ auto GetRomDatabaseFromPath(std::string_view path) -> RomDatabaseIndexs {
 }
 
 //
-auto GetRomIcon(fs::Fs* fs, ProgressBox* pbox, std::string filename, const RomDatabaseIndexs& db_indexs, const NroEntry& nro) {
+auto GetRomIcon(std::string filename, const RomDatabaseIndexs& db_indexs, const NroEntry& nro) {
     // if no db entries, use nro icon
     if (db_indexs.empty()) {
         log_write("using nro image\n");
@@ -230,8 +254,6 @@ auto GetRomIcon(fs::Fs* fs, ProgressBox* pbox, std::string filename, const RomDa
         }
     }
 
-    #define RA_BOXART_URL "https://thumbnails.libretro.com/"
-    #define GH_BOXART_URL "https://raw.githubusercontent.com/libretro-thumbnails/"
     #define RA_BOXART_NAME "/Named_Boxarts/"
     #define RA_THUMBNAIL_PATH "/retroarch/thumbnails/"
     #define RA_BOXART_EXT ".png"
@@ -245,48 +267,131 @@ auto GetRomIcon(fs::Fs* fs, ProgressBox* pbox, std::string filename, const RomDa
             }
         }
 
-        std::string filename_gh;
-        filename_gh.reserve(filename.size());
-        for (auto c : filename) {
-            if (c == ' ') {
-                filename_gh += "%20";
-            } else {
-                filename_gh.push_back(c);
-            }
-        }
-
         const std::string thumbnail_path = system_name + RA_BOXART_NAME + filename + RA_BOXART_EXT;
         const std::string ra_thumbnail_path = RA_THUMBNAIL_PATH + thumbnail_path;
-        const std::string ra_thumbnail_url = RA_BOXART_URL + thumbnail_path;
-        const std::string gh_thumbnail_url = GH_BOXART_URL + system_name_gh + RA_BOXART_NAME + filename_gh + RA_BOXART_EXT;
 
         log_write("starting image convert on: %s\n", ra_thumbnail_path.c_str());
+
         // try and find icon locally
-        if (!pbox->ShouldExit()) {
-            pbox->NewTransfer("Trying to load "_i18n + ra_thumbnail_path);
-            std::vector<u8> image_file;
-            if (R_SUCCEEDED(fs->read_entire_file(ra_thumbnail_path.c_str(), image_file))) {
-                return image_file;
-            }
-        }
-
-        // try and download icon
-        if (!pbox->ShouldExit()) {
-            pbox->NewTransfer("Downloading "_i18n + gh_thumbnail_url);
-            const auto result = curl::Api().ToMemory(
-                curl::Url{gh_thumbnail_url},
-                curl::OnProgress{pbox->OnDownloadProgressCallback()}
-            );
-
-            if (result.success && !result.data.empty()) {
-                return result.data;
-            }
+        std::vector<u8> image_file;
+        if (R_SUCCEEDED(fs::FsNativeSd().read_entire_file(ra_thumbnail_path, image_file))) {
+            return image_file;
         }
     }
 
     // use nro icon
     log_write("using nro image\n");
     return nro_get_icon(nro.path, nro.icon_size, nro.icon_offset);
+}
+
+ForwarderForm::ForwarderForm(const FileAssocEntry& assoc, const RomDatabaseIndexs& db_indexs, const FileEntry& entry, const fs::FsPath& arg_path)
+: Sidebar{"Forwarder Creation", Side::RIGHT}
+, m_assoc{assoc}
+, m_db_indexs{db_indexs}
+, m_arg_path{arg_path} {
+    log_write("parsing nro\n");
+    if (R_FAILED(LoadNroMeta())) {
+        App::Notify("Failed to parse nro"_i18n);
+        SetPop();
+        return;
+    }
+
+    log_write("got nro data\n");
+    auto file_name = m_assoc.use_base_name ? entry.GetName() : entry.GetInternalName();
+
+    if (auto pos = file_name.find_last_of('.'); pos != std::string::npos) {
+        log_write("got filename\n");
+        file_name = file_name.substr(0, pos);
+        log_write("got filename2: %s\n\n", file_name.c_str());
+    }
+
+    const auto name = m_nro.nacp.lang.name + std::string{" | "} + file_name;
+    const auto author = m_nacp.lang[0].author;
+    const auto version = m_nacp.display_version;
+    const auto icon = m_assoc.path;
+
+    m_name = this->Add<SidebarEntryTextInput>(
+        "Name", name, "", -1, sizeof(NacpLanguageEntry::name) - 1,
+        "Set the name of the application"_i18n
+    );
+
+    m_author = this->Add<SidebarEntryTextInput>(
+        "Author", author, "", -1, sizeof(NacpLanguageEntry::author) - 1,
+        "Set the author of the application"_i18n
+    );
+
+    m_version = this->Add<SidebarEntryTextInput>(
+        "Version", version, "", -1, sizeof(NacpStruct::display_version) - 1,
+        "Set the display version of the application"_i18n
+    );
+
+    const std::vector<std::string> filters{".nro", ".png", ".jpg"};
+    m_icon = this->Add<SidebarEntryFilePicker>(
+        "Icon", icon, filters,
+        "Set the path to the icon for the forwarder"_i18n
+    );
+
+    auto callback = this->Add<SidebarEntryCallback>("Create", [this, file_name](){
+        OwoConfig config{};
+        config.nro_path = m_assoc.path.toString();
+        config.args = nro_add_arg_file(m_arg_path);
+        config.nacp = m_nacp;
+
+        // patch the name.
+        config.name = m_name->GetValue();
+
+        // patch the author.
+        config.author = m_author->GetValue();
+
+        // patch the display version.
+        std::snprintf(config.nacp.display_version, sizeof(config.nacp.display_version), "%s", m_version->GetValue().c_str());
+
+        // load icon fron nro or image.
+        if (m_icon->GetValue().ends_with(".nro")) {
+            // if path was left as the default, try and load the icon from rom db.
+            if (config.nro_path == m_icon->GetValue()) {
+                config.icon = GetRomIcon(file_name, m_db_indexs, m_nro);
+            } else {
+                config.icon = nro_get_icon(m_icon->GetValue());
+            }
+        } else {
+            // try and read icon file into memory, bail if this fails.
+            const auto rc = fs::FsStdio().read_entire_file(m_icon->GetValue(), config.icon);
+            if (R_FAILED(rc)) {
+                App::PushErrorBox(rc, "Failed to load icon");
+                return;
+            }
+        }
+
+        // if this is a rom, load intro logo.
+        if (!m_db_indexs.empty()) {
+            fs::FsNativeSd().read_entire_file("/config/sphaira/logo/rom/NintendoLogo.png", config.logo);
+            fs::FsNativeSd().read_entire_file("/config/sphaira/logo/rom/StartupMovie.gif", config.gif);
+        }
+
+        // try and install.
+        if (R_FAILED(App::Install(config))) {
+            App::Notify("Failed to install forwarder"_i18n);
+        } else {
+            SetPop();
+        }
+    }, "Create the forwarder."_i18n);
+
+    // ensure that all fields are valid.
+    callback->Depends([this](){
+        return
+            !m_name->GetValue().empty() &&
+            !m_author->GetValue().empty() &&
+            !m_version->GetValue().empty() &&
+            !m_icon->GetValue().empty();
+    }, "All fields must be non-empty!"_i18n);
+}
+
+auto ForwarderForm::LoadNroMeta() -> Result {
+    // try and load nro meta data.
+    R_TRY(nro_parse(m_assoc.path, m_nro));
+    R_TRY(nro_get_nacp(m_assoc.path, m_nacp));
+    R_SUCCEED();
 }
 
 } // namespace
@@ -348,14 +453,14 @@ FsView::FsView(Menu* menu, const fs::FsPath& path, const FsEntry& entry, ViewSid
                 Scan(GetNewPathCurrent());
             } else {
                 // special case for nro
-                if (IsSd() && entry.GetExtension() == "nro") {
+                if (IsSd() && IsSamePath(entry.GetExtension(), "nro")) {
                     App::Push<OptionBox>("Launch "_i18n + entry.GetName() + '?',
                         "No"_i18n, "Launch"_i18n, 1, [this](auto op_index){
                             if (op_index && *op_index) {
                                 nro_launch(GetNewPathCurrent());
                             }
                         });
-                } else if (App::GetInstallEnable() && IsExtension(entry.GetExtension(), INSTALL_EXTENSIONS)) {
+                } else if (IsExtension(entry.GetExtension(), INSTALL_EXTENSIONS)) {
                     InstallFiles();
                 } else if (IsSd()) {
                     const auto assoc_list = m_menu->FindFileAssocFor();
@@ -461,23 +566,11 @@ void FsView::Draw(NVGcontext* vg, Theme* theme) {
     }
 
     constexpr float text_xoffset{15.f};
+    bool got_dir_count = false;
 
-    m_list->Draw(vg, theme, m_entries_current.size(), [this, text_col](auto* vg, auto* theme, auto v, auto i) {
+    m_list->Draw(vg, theme, m_entries_current.size(), [this, text_col, &got_dir_count](auto* vg, auto* theme, auto v, auto i) {
         const auto& [x, y, w, h] = v;
         auto& e = GetEntry(i);
-
-        if (e.IsDir()) {
-            // NOTE: make this native only if hdd dir scan is too slow.
-            // if (m_fs->IsNative() && e.file_count == -1 && e.dir_count == -1) {
-            if (e.file_count == -1 && e.dir_count == -1) {
-                m_fs->DirGetEntryCount(GetNewPath(e), &e.file_count, &e.dir_count);
-            }
-        } else if (!e.checked_extension) {
-            e.checked_extension = true;
-            if (auto ext = std::strrchr(e.name, '.')) {
-                e.extension = ext+1;
-            }
-        }
 
         auto text_id = ThemeEntryID_TEXT;
         const auto selected = m_index == i;
@@ -521,8 +614,19 @@ void FsView::Draw(NVGcontext* vg, Theme* theme) {
 
         // NOTE: make this native only if i disable dir scan from above.
         if (e.IsDir()) {
-            gfx::drawTextArgs(vg, x + w - text_xoffset, y + (h / 2.f) - 3, 16.f, NVG_ALIGN_RIGHT | NVG_ALIGN_BOTTOM, theme->GetColour(text_id), "%zd files"_i18n.c_str(), e.file_count);
-            gfx::drawTextArgs(vg, x + w - text_xoffset, y + (h / 2.f) + 3, 16.f, NVG_ALIGN_RIGHT | NVG_ALIGN_TOP, theme->GetColour(text_id), "%zd dirs"_i18n.c_str(), e.dir_count);
+            // NOTE: this takes longer than 16ms when opening a new folder due to it
+            // checking all 9 folders at once.
+            if (!got_dir_count && e.file_count == -1 && e.dir_count == -1) {
+                got_dir_count = true;
+                m_fs->DirGetEntryCount(GetNewPath(e), &e.file_count, &e.dir_count);
+            }
+
+            if (e.file_count != -1) {
+                gfx::drawTextArgs(vg, x + w - text_xoffset, y + (h / 2.f) - 3, 16.f, NVG_ALIGN_RIGHT | NVG_ALIGN_BOTTOM, theme->GetColour(text_id), "%zd files"_i18n.c_str(), e.file_count);
+            }
+            if (e.dir_count != -1) {
+                gfx::drawTextArgs(vg, x + w - text_xoffset, y + (h / 2.f) + 3, 16.f, NVG_ALIGN_RIGHT | NVG_ALIGN_TOP, theme->GetColour(text_id), "%zd dirs"_i18n.c_str(), e.dir_count);
+            }
         } else if (e.IsFile()) {
             if (!e.time_stamp.is_valid) {
                 const auto path = GetNewPath(e);
@@ -598,24 +702,17 @@ void FsView::SetIndex(s64 index) {
         m_list->SetYoff();
     }
 
-    if (IsSd() && !m_entries_current.empty() && !GetEntry().checked_internal_extension && GetEntry().extension == "zip") {
+    if (IsSd() && !m_entries_current.empty() && !GetEntry().checked_internal_extension && IsSamePath(GetEntry().GetExtension(), "zip")) {
         GetEntry().checked_internal_extension = true;
 
-        if (auto zfile = unzOpen64(GetNewPathCurrent())) {
-            ON_SCOPE_EXIT(unzClose(zfile));
-
-            // only check first entry (i think RA does the same)
-            fs::FsPath filename_inzip{};
-            unz_file_info64 file_info{};
-            if (UNZ_OK == unzOpenCurrentFile(zfile)) {
-                ON_SCOPE_EXIT(unzCloseCurrentFile(zfile));
-                if (UNZ_OK == unzGetCurrentFileInfo64(zfile, &file_info, filename_inzip, sizeof(filename_inzip), NULL, 0, NULL, 0)) {
-                    if (auto ext = std::strrchr(filename_inzip, '.')) {
-                        GetEntry().internal_name = filename_inzip.toString();
-                        GetEntry().internal_extension = ext+1;
-                    }
-                }
+        TimeStamp ts;
+        fs::FsPath filename_inzip{};
+        if (R_SUCCEEDED(mz::PeekFirstFileName(GetFs(), GetNewPathCurrent(), filename_inzip))) {
+            if (auto ext = std::strrchr(filename_inzip, '.')) {
+                GetEntry().internal_name = filename_inzip.toString();
+                GetEntry().internal_extension = ext+1;
             }
+            log_write("\tzip, time taken: %.2fs %zums\n", ts.GetSecondsD(), ts.GetMs());
         }
     }
 
@@ -623,7 +720,7 @@ void FsView::SetIndex(s64 index) {
 }
 
 void FsView::InstallForwarder() {
-    if (GetEntry().GetExtension() == "nro") {
+    if (IsSamePath(GetEntry().GetExtension(), "nro")) {
         if (R_FAILED(homebrew::Menu::InstallHomebrewFromPath(GetNewPathCurrent()))) {
             log_write("failed to create forwarder\n");
         }
@@ -632,7 +729,7 @@ void FsView::InstallForwarder() {
 
     const auto assoc_list = m_menu->FindFileAssocFor();
     if (assoc_list.empty()) {
-        log_write("failed to find assoc for: %s ext: %s\n", GetEntry().name, GetEntry().extension.c_str());
+        log_write("failed to find assoc for: %s ext: %s\n", GetEntry().name, GetEntry().GetExtension().c_str());
         return;
     }
 
@@ -646,51 +743,7 @@ void FsView::InstallForwarder() {
         title, items, [this, assoc_list](auto op_index){
             if (op_index) {
                 const auto assoc = assoc_list[*op_index];
-                log_write("pushing it\n");
-                App::Push<ProgressBox>(0, "Installing Forwarder"_i18n, GetEntry().name, [assoc, this](auto pbox) -> Result {
-                    log_write("inside callback\n");
-
-                    NroEntry nro{};
-                    log_write("parsing nro\n");
-                    R_TRY(nro_parse(assoc.path, nro));
-
-                    NacpStruct nacp;
-                    R_TRY(nro_get_nacp(assoc.path, nacp));
-
-                    log_write("got nro data\n");
-                    auto file_name = assoc.use_base_name ? GetEntry().GetName() : GetEntry().GetInternalName();
-
-                    if (auto pos = file_name.find_last_of('.'); pos != std::string::npos) {
-                        log_write("got filename\n");
-                        file_name = file_name.substr(0, pos);
-                        log_write("got filename2: %s\n\n", file_name.c_str());
-                    }
-
-                    const auto db_indexs = GetRomDatabaseFromPath(m_path);
-
-                    OwoConfig config{};
-                    config.nro_path = assoc.path.toString();
-                    config.args = nro_add_arg_file(GetNewPathCurrent());
-                    config.name = nro.nacp.lang.name + std::string{" | "} + file_name;
-                    // config.name = file_name;
-                    config.nacp = nacp;
-                    config.icon = GetRomIcon(m_fs.get(), pbox, file_name, db_indexs, nro);
-                    pbox->SetImageDataConst(config.icon);
-
-                    if (!db_indexs.empty()) {
-                        fs::FsNativeSd().read_entire_file("/config/sphaira/logo/rom/NintendoLogo.png", config.logo);
-                        fs::FsNativeSd().read_entire_file("/config/sphaira/logo/rom/StartupMovie.gif", config.gif);
-                    }
-
-                    return App::Install(pbox, config);
-                }, [this](Result rc){
-                    App::PushErrorBox(rc, "Failed to install forwarder"_i18n);
-
-                    if (R_SUCCEEDED(rc)) {
-                        App::PlaySoundEffect(SoundEffect_Install);
-                        App::Notify("Installed!"_i18n);
-                    }
-                });
+                App::Push<ForwarderForm>(assoc, GetRomDatabaseFromPath(m_path), GetEntry(), GetNewPathCurrent());
             } else {
                 log_write("pressed B to skip launch...\n");
             }
@@ -699,6 +752,11 @@ void FsView::InstallForwarder() {
 }
 
 void FsView::InstallFiles() {
+    if (!App::GetInstallEnable()) {
+        App::ShowEnableInstallPrompt();
+        return;
+    }
+
     const auto targets = GetSelectedEntries();
 
     App::Push<OptionBox>("Install Selected files?"_i18n, "No"_i18n, "Yes"_i18n, 0, [this, targets](auto op_index){
@@ -1015,9 +1073,6 @@ auto FsView::Scan(const fs::FsPath& new_path, bool is_walk_up) -> Result {
         i++;
     }
 
-    m_entries.shrink_to_fit();
-    m_entries_index.shrink_to_fit();
-    m_entries_index_hidden.shrink_to_fit();
     Sort();
 
     // quick check to see if this is an update folder
@@ -1364,13 +1419,12 @@ auto FsView::CheckIfUpdateFolder() -> Result {
     R_UNLESS(m_entries.size() > 150 && m_entries.size() < 300, Result_FileBrowserDirNotDaybreak);
 
     // check that all entries end in .nca
-    const auto nca_ext = std::string_view{".nca"};
     for (auto& e : m_entries) {
         // check that we are at the bottom level
         R_UNLESS(e.type == FsDirEntryType_File, Result_FileBrowserDirNotDaybreak);
 
         const auto ext = std::strrchr(e.name, '.');
-        R_UNLESS(ext && ext == nca_ext, Result_FileBrowserDirNotDaybreak);
+        R_UNLESS(ext && IsSamePath(ext, ".nca"), Result_FileBrowserDirNotDaybreak);
     }
 
     R_SUCCEED();
@@ -1671,30 +1725,21 @@ void FsView::DisplayOptions() {
     };
 
     // if install is enabled, check if all currently selected files are installable.
-    if (m_entries_current.size() && App::GetInstallEnable()) {
+    if (m_entries_current.size()) {
         if (check_all_ext(INSTALL_EXTENSIONS)) {
-            options->Add<SidebarEntryCallback>("Install"_i18n, [this](){
+            auto entry = options->Add<SidebarEntryCallback>("Install"_i18n, [this](){
                 InstallFiles();
             });
+            entry->Depends(App::GetInstallEnable, i18n::get(App::INSTALL_DEPENDS_STR), App::ShowEnableInstallPrompt);
         }
     }
 
     if (IsSd() && m_entries_current.size() && !m_selected_count) {
-        if (App::GetInstallEnable() && GetEntry().IsFile() && (GetEntry().GetExtension() == "nro" || !m_menu->FindFileAssocFor().empty())) {
-            options->Add<SidebarEntryCallback>("Install Forwarder"_i18n, [this](){;
-                if (App::GetInstallPrompt()) {
-                    App::Push<OptionBox>(
-                        "WARNING: Installing forwarders will lead to a ban!"_i18n,
-                        "Back"_i18n, "Install"_i18n, 0, [this](auto op_index){
-                            if (op_index && *op_index) {
-                                InstallForwarder();
-                            }
-                        }
-                    );
-                } else {
-                    InstallForwarder();
-                }
+        if (GetEntry().IsFile() && (IsSamePath(GetEntry().GetExtension(), "nro") || !m_menu->FindFileAssocFor().empty())) {
+            auto entry = options->Add<SidebarEntryCallback>("Install Forwarder"_i18n, [this](){;
+                InstallForwarder();
             });
+            entry->Depends(App::GetInstallEnable, i18n::get(App::INSTALL_DEPENDS_STR), App::ShowEnableInstallPrompt);
         }
     }
 
@@ -1944,8 +1989,8 @@ auto Menu::FindFileAssocFor() -> std::vector<FileAssocEntry> {
     // only support roms in correctly named folders, sorry!
     const auto db_indexs = GetRomDatabaseFromPath(view->m_path);
     const auto& entry = view->GetEntry();
-    const auto extension = entry.extension;
-    const auto internal_extension = entry.internal_extension.empty() ? entry.extension : entry.internal_extension;
+    const auto extension = entry.GetExtension();
+    const auto internal_extension = entry.GetInternalExtension();
     if (extension.empty() && internal_extension.empty()) {
         // log_write("failed to get extension for db: %s path: %s\n", database_entry.c_str(), m_path);
         return {};
